@@ -76,8 +76,9 @@ data_gathering_pipeline/
 │       ├── hf_metadata.py    # Parallelized API fetcher
 │       └── hardware.py       # VRAM calculations
 ├── k8s/
-│   ├── mhii-pvc.yaml         # PVC (10Gi data + 10Gi logs on PVC)
-│   └── mhii-job.yaml         # Cluster job manifest
+│   ├── README.md             # Cluster deployment guide (private)
+│   ├── mhii-pvc.yaml         # PVC (15Gi persistent storage)
+│   └── mhii-job.yaml         # Batch job manifest
 ├── Dockerfile                # Container for cluster
 ├── .dockerignore
 ├── main.py                   # CLI entry point
@@ -92,8 +93,7 @@ data_gathering_pipeline/
 
 | Tier | GPUs | NVLink | InfiniBand |
 |------|------|--------|------------|
-| **BHT Cluster** | H100 80GB, A100 80GB/40GB, V100 32GB, P100 16GB | Yes | Yes |
-| **Data Center** | B200 192GB, H200 141GB, MI300X 192GB | Yes | Yes |
+| **Data Center** | H100 80GB, A100 80GB/40GB, V100 32GB, B200 192GB, H200 141GB | Yes | Yes |
 | **Consumer** | RTX 4090 24GB, RTX 3090 Ti 24GB, RTX 4080 Super 16GB | No | No |
 | **Professional** | RTX A6000 48GB, RTX A5000 24GB, RTX A4000 16GB | Yes | No |
 | **Laptop** | MacBook Pro M3 Max 128GB, Laptop RTX 4070 8GB | No | No |
@@ -188,112 +188,19 @@ INT4: Size / 4 × multiplier
 
 ---
 
-## BHT Cluster Deployment
+## Docker & K8s Support
 
-### Complete Workflow
+The pipeline includes `Dockerfile` and `k8s/` manifests for containerized deployment:
 
 ```bash
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 1: Build & Push Docker Image
-# ─────────────────────────────────────────────────────────────────────────────
-docker build -t registry.datexis.com/vpdx3758/llm-recommender-data-gathering-pipeline:latest .
-docker push registry.datexis.com/vpdx3758/llm-recommender-data-gathering-pipeline:latest
+# Build container
+docker build -t mhii-pipeline:latest .
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 2: Create Secret (your HF token)
-# ─────────────────────────────────────────────────────────────────────────────
-kubectl create secret generic mhii-secrets \
-  --from-literal=HF_TOKEN=hf_your_token_here \
-  -n vpdx3758
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 3: Deploy Storage & Job
-# ─────────────────────────────────────────────────────────────────────────────
-kubectl apply -f k8s/mhii-pvc.yaml      # Creates PVCs
-kubectl apply -f k8s/mhii-job.yaml      # Submits job
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 4: Monitor Execution
-# ─────────────────────────────────────────────────────────────────────────────
-kubectl get pods -n vpdx3758 -l app=mhii-pipeline
-
-# Watch live logs (from container stdout)
-kubectl logs -n vpdx3758 -l app=mhii-pipeline -f --follow
-
-# Or tail the PVC log file
-kubectl exec -n vpdx3758 deploy/mhii-pipeline -- tail -f /app/logs/mhii.log
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 5: Retrieve Results (after job completes)
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Option A: Copy from PVC to local
-kubectl cp vpdx3758/mhii-pipeline-xxxxx:/data/master_model_db.jsonl ./data/
-
-# Option B: List then copy specific pod
-POD=$(kubectl get pod -n vpdx3758 -l app=mhii-pipeline -o name | head -1)
-kubectl cp vpdx3758/$POD:/data/master_model_db.jsonl ./data/master_model_db.jsonl
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 6: Review Logs (if something went wrong)
-# ─────────────────────────────────────────────────────────────────────────────
-# Logs are persisted on PVC at /app/logs/mhii.log
-kubectl cp vpdx3758/mhii-pipeline-xxxxx:/app/logs/ ./logs-from-cluster/
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 7: Cleanup
-# ─────────────────────────────────────────────────────────────────────────────
-kubectl delete -f k8s/mhii-job.yaml
-kubectl delete -f k8s/mhii-pvc.yaml
-
-# Or wait for TTL (auto-cleanup 1 hour after completion)
+# Run locally in container
+docker run --rm -e HF_TOKEN=hf_xxx mhii-pipeline:latest
 ```
 
-### Cluster Architecture
-
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│  BHT Cluster (vpdx3758 namespace)                                         │
-│                                                                            │
-│  ┌──────────────────────────────────────────────────────────────────────┐ │
-│  │ mhii-pvc (15Gi)                                                       │ │
-│  │ ├── /data/                                                            │ │
-│  │ │   ├── master_model_db.jsonl  ← Final output                        │ │
-│  │ │   └── temp/                                                         │ │
-│  │ └── /logs/                                                            │ │
-│  │     └── mhii.log  ← Persisted logs for debugging                     │ │
-│  └──────────────────────────────────────────────────────────────────────┘ │
-│                                                                            │
-│  ┌──────────────────────────────────────────────────────────────────────┐ │
-│  │ mhii-pipeline Job                                                     │ │
-│  │ └── mhii container                                                    │ │
-│  │     ├── Phase 1: Selenium scraping (Chrome headless)                  │ │
-│  │     ├── Phase 2: HF datasets loading                                  │ │
-│  │     ├── Phase 3: Parallel HF API (20 threads)                        │ │
-│  │     └── Phase 4-5: Merge & save                                      │ │
-│  └──────────────────────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────────────┘
-          │
-          │ kubectl cp
-          ▼
-    Local ./data/
-```
-
-### Persistent Logging
-
-**Logs are written to PVC**, not container ephemeral storage. This means:
-
-1. ✅ Logs survive job completion (until TTL cleanup)
-2. ✅ Can review logs after job finishes
-3. ✅ Can copy logs locally for detailed debugging
-4. ✅ Pipeline report available at end of logs
-
-**Log contents include:**
-- Phase timing (how long each phase took)
-- Progress indicators (X/Y models processed)
-- Error details with full stack traces
-- HF metadata verification results
-- Final pipeline report
+See `k8s/README.md` for Kubernetes cluster deployment instructions.
 
 ---
 
@@ -307,46 +214,19 @@ pip install --upgrade webdriver-manager
 
 # HF Dataset loading
 cp .env.example .env
-# Edit .env: HF_TOKEN=hf_your_token_here
+# Edit .env: HF_TOKEN=hf_xxx
 
 # Fuzzy matching issues - lower threshold
-python -c "from src.services import FuzzyModelMatcher; print(FuzzyModelMatcher(score_threshold=70))"
-```
-
-### Cluster Deployment
-
-```bash
-# Check job status
-kubectl get jobs -n vpdx3758 -l app=mhii-pipeline
-
-# Check pod logs (if job failed to start)
-kubectl describe pod -n vpdx3758 -l app=mhii-pipeline
-
-# Check if PVC is bound
-kubectl get pvc -n vpdx3758
-
-# View all logs (stdout from container)
-kubectl logs -n vpdx3758 -l app=mhii-pipeline --previous
-
-# Debug PVC contents
-kubectl exec -n vpdx3758 deploy/mhii-pipeline -- ls -la /app/data/
-kubectl exec -n vpdx3758 deploy/mhii-pipeline -- ls -la /app/logs/
-
-# Recreate secret if needed
-kubectl delete secret mhii-secrets -n vpdx3758
-kubectl create secret generic mhii-secrets --from-literal=HF_TOKEN=hf_xxx -n vpdx3758
+python -c "from src.services import FuzzyModelMatcher; m = FuzzyModelMatcher(score_threshold=70)"
 ```
 
 ### Common Issues
 
 | Issue | Solution |
 |-------|----------|
-| ImagePullBackOff | Check image exists: `docker images | grep mhii` |
-| Secret not found | Create secret: `kubectl create secret generic mhii-secrets ...` |
-| PVC pending | Wait for binding or check storage class |
-| Job stuck | Check pod events: `kubectl describe pod` |
-| HF 403 errors | Token may be invalid or rate limited |
-| Empty output | Check logs for errors, likely HF API failure |
+| HF 403/401 | Invalid or missing HF_TOKEN |
+| ChromeDriver error | Run `pip install --upgrade webdriver-manager` |
+| Empty output | Check logs for errors |
 
 ---
 
@@ -382,4 +262,3 @@ Educational and research purposes. Third-party data subject to their respective 
 - [OpenEvals](https://huggingface.co/datasets/OpenEvals/leaderboard-data) - Academic benchmarks
 - [LMSYS Arena](https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset) - Human preference data
 - [HuggingFace](https://huggingface.co) - Model metadata & datasets
-- [BHT Cluster](https://docs.cluster.ris.bht-berlin.de/) - Data Science cluster

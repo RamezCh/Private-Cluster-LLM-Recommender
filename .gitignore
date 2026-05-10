@@ -74,10 +74,8 @@ temp/
 master_model_db.jsonl
 temp_performance.jsonl
 
-# Kubernetes (usually not committed)
+# Kubernetes cluster configs (namespace-specific, keep private)
 k8s/
-*.yaml
-!k8s/manifests/
 
 # Docker
 Dockerfile*
