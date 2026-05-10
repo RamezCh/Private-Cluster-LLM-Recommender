@@ -40,6 +40,7 @@ class HFDatasetLoader:
         try:
             dataset = load_dataset(
                 HF_DATASETS["lmsys_arena"],
+                "text",
                 split="train",
                 trust_remote_code=True,
                 token=self.token or None

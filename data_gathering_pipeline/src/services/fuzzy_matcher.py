@@ -42,7 +42,7 @@ class FuzzyModelMatcher:
         
         scores = [
             fuzz.token_set_ratio(n1, n2) * 0.5,
-            fuzz.sequence_ratio(n1, n2) * 0.3,
+            fuzz.ratio(n1, n2) * 0.3,
             fuzz.partial_ratio(n1, n2) * 0.2,
         ]
         

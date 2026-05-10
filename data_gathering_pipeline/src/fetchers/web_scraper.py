@@ -3,7 +3,7 @@
 import time
 import json
 from typing import List, Dict, Optional
-from dataclasses import asdict
+from dataclasses import dataclass, asdict
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -18,18 +18,13 @@ from loguru import logger
 from src.config import TEMP_PERFORMANCE_FILE
 
 
+@dataclass
 class PerformanceData:
     """Model performance data from Artificial Analysis."""
     
-    def __init__(
-        self,
-        model_name: str,
-        intelligence_index: Optional[float] = None,
-        throughput_tokens_per_sec: Optional[float] = None,
-    ):
-        self.model_name = model_name
-        self.intelligence_index = intelligence_index
-        self.throughput_tokens_per_sec = throughput_tokens_per_sec
+    model_name: str
+    intelligence_index: Optional[float] = None
+    throughput_tokens_per_sec: Optional[float] = None
     
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -50,8 +45,17 @@ class WebScraper:
             "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         )
         
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=self.options)
+        # Use webdriver-manager to automatically handle driver versioning
+        # Note: In Docker/Linux environments with 'chromium' package, 
+        # we should use ChromeDriverManager().install() or rely on the system driver
+        # For maximum robustness, we use the service with ChromeDriverManager
+        try:
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=self.options)
+        except Exception as e:
+            logger.warning(f"ChromeDriverManager failed ({e}), falling back to system driver")
+            self.driver = webdriver.Chrome(options=self.options)
+        
         self.driver.implicitly_wait(10)
         
         self.url = "https://artificialanalysis.ai/leaderboards/models"
@@ -61,8 +65,6 @@ class WebScraper:
         """Wait for JS-rendered table to fully load."""
         selectors = [
             (By.CSS_SELECTOR, "table tbody tr"),
-            (By.CSS_SELECTOR, ".intelligence-index"),
-            (By.XPATH, "//td[contains(@class, 'intelligence')]"),
         ]
         
         for selector in selectors:
@@ -93,24 +95,20 @@ class WebScraper:
             return None
         
         intelligence = None
-        for xpath in [".//td[contains(@class, 'intelligence')]", ".//span[contains(@class, 'score')]"]:
-            text = self._get_text(row, xpath)
-            if text:
-                try:
-                    intelligence = float(text.replace(",", ""))
-                    break
-                except ValueError:
-                    continue
+        text = self._get_text(row, ".//td[4]")
+        if text:
+            try:
+                intelligence = float(text.replace(",", ""))
+            except ValueError:
+                pass
         
         throughput = None
-        for xpath in [".//td[contains(@class, 'throughput')]", ".//td[contains(@class, 'tokens')]"]:
-            text = self._get_text(row, xpath)
-            if text:
-                try:
-                    throughput = float(text.replace(",", "").replace("tok/s", "").replace("tokens/s", ""))
-                    break
-                except ValueError:
-                    continue
+        text = self._get_text(row, ".//td[6]")
+        if text:
+            try:
+                throughput = float(text.replace(",", "").replace("tok/s", "").replace("tokens/s", ""))
+            except ValueError:
+                pass
         
         return PerformanceData(model_name=model_name, intelligence_index=intelligence, throughput_tokens_per_sec=throughput)
 
