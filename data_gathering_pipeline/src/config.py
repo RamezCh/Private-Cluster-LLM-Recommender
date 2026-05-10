@@ -60,29 +60,49 @@ HF_DATASETS = {
 }
 
 MODEL_TYPE_PATTERNS = {
-    "moe": ["moe", "mixture", "deepseek-v3", "deepseek-v4", "qwen-moe", "mixtral", "dbrx"],
-    "dense": ["llama", "gpt", "claude", "gemini", "gemma", "qwen", "mistral", "yi", "command", "command-r"],
+    "moe": [
+        "moe",
+        "mixture",
+        "deepseek-v3",
+        "deepseek-v4",
+        "qwen-moe",
+        "mixtral",
+        "dbrx",
+    ],
+    "dense": [
+        "llama",
+        "gpt",
+        "claude",
+        "gemini",
+        "gemma",
+        "qwen",
+        "mistral",
+        "yi",
+        "command",
+        "command-r",
+    ],
 }
 
 OUTPUT_FILE = DATA_DIR / "master_model_db.jsonl"
 TEMP_PERFORMANCE_FILE = TEMP_DATA_DIR / "temp_performance.jsonl"
 
 logging_config = {
-    "rotation": os.getenv("LOGuru__rotation", "10 MB"),
-    "retention": os.getenv("LOGuru__retention", "7 days"),
+    "rotation": os.getenv("LOGURU_ROTATION", "10 MB"),
+    "retention": os.getenv("LOGURU_RETENTION", "7 days"),
     "format": "{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}",
-    "level": os.getenv("LOGuru__level", "INFO"),
-    "sink": os.getenv("LOGuru__write", str(LOGS_DIR / "mhii_pipeline_{time}.log")),
+    "level": os.getenv("LOGURU_LEVEL", "INFO"),
 }
 
 
 def get_gpu_config(gpu_id: str) -> "GPUConfig":
     from src.gpu_catalog import GPU_CATALOG
+
     return GPU_CATALOG.get(gpu_id.lower(), GPU_CATALOG["a100_80gb"])
 
 
 def get_all_gpus_by_tier(tier: str) -> Dict[str, "GPUConfig"]:
     from src.gpu_catalog import GPU_CATALOG
+
     return {k: v for k, v in GPU_CATALOG.items() if v.tier == tier}
 
 

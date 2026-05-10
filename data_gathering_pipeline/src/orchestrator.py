@@ -28,25 +28,28 @@ class BenchmarkMerger:
 
     @staticmethod
     def merge(
-        aa_data: Optional[Dict],
-        oe_data: Optional[Dict],
-        lmsys_data: Optional[Dict]
+        aa_data: Optional[Dict], oe_data: Optional[Dict], lmsys_data: Optional[Dict]
     ) -> Dict[str, Any]:
         """Merge benchmark data into standardized format."""
         return {
-            "coding": (oe_data.get("coding") if oe_data else None) or 
-                     (oe_data.get("humaneval") if oe_data else None) or
-                     (oe_data.get("mbpp") if oe_data else None),
-            "math": (oe_data.get("math") if oe_data else None) or
-                   (oe_data.get("math_score") if oe_data else None) or
-                   (oe_data.get("gpqa") if oe_data else None),
-            "reasoning": (oe_data.get("reasoning") if oe_data else None) or
-                        (oe_data.get("bbh") if oe_data else None),
-            "elo": (lmsys_data.get("elo") if lmsys_data else None) or
-                  (lmsys_data.get("rating") if lmsys_data else None) or
-                  (lmsys_data.get("score") if lmsys_data else None),
-            "intelligence_index": aa_data.get("intelligence_index") if aa_data else None,
-            "throughput_tokens_per_sec": aa_data.get("throughput_tokens_per_sec") if aa_data else None,
+            "coding": (oe_data.get("sweVerified_score") if oe_data else None)
+            or (oe_data.get("swePro_score") if oe_data else None)
+            or (oe_data.get("terminalBench_score") if oe_data else None),
+            "math": (oe_data.get("gsm8k_score") if oe_data else None)
+            or (oe_data.get("aime2026_score") if oe_data else None)
+            or (oe_data.get("hmmt2026_score") if oe_data else None),
+            "reasoning": (oe_data.get("mmluPro_score") if oe_data else None)
+            or (oe_data.get("hle_score") if oe_data else None)
+            or (oe_data.get("gpqa_score") if oe_data else None),
+            "elo": (lmsys_data.get("elo") if lmsys_data else None)
+            or (lmsys_data.get("rating") if lmsys_data else None)
+            or (lmsys_data.get("score") if lmsys_data else None),
+            "intelligence_index": (
+                aa_data.get("intelligence_index") if aa_data else None
+            ),
+            "throughput_tokens_per_sec": (
+                aa_data.get("throughput_tokens_per_sec") if aa_data else None
+            ),
             "vibes_score": lmsys_data.get("vibes") if lmsys_data else None,
         }
 
@@ -61,20 +64,20 @@ class Orchestrator:
         self.matcher = FuzzyModelMatcher(score_threshold=85)
         self.hf_service = HFMetadataService()
         self.merger = BenchmarkMerger()
-        
+
         self.raw_data: Dict[str, List[Dict]] = {
             "artificial_analysis": [],
             "open_evals": [],
             "lmsys_arena": [],
         }
-        
+
         self.records: List[Dict] = []
         self.errors: List[Dict] = []
 
     def _load_cached_performance(self) -> List[Dict]:
         """Load cached performance data if available."""
         if TEMP_PERFORMANCE_FILE.exists():
-            with open(TEMP_PERFORMANCE_FILE, 'r', encoding='utf-8') as f:
+            with open(TEMP_PERFORMANCE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             logger.info(f"Loaded {len(data)} cached records")
             return data
@@ -83,7 +86,7 @@ class Orchestrator:
     def _run_scraper(self) -> List[Dict]:
         """Run the Selenium scraper."""
         logger.info("Starting performance scraper")
-        
+
         try:
             data = self.scraper.scrape(save_temp=True)
             self.raw_data["artificial_analysis"] = data
@@ -103,117 +106,139 @@ class Orchestrator:
         aa_data = None
         oe_data = None
         lmsys_data = None
-        
+
         for item in self.raw_data["artificial_analysis"]:
             if item.get("model_name") == canonical:
                 aa_data = item
                 break
-        
+
         for item in self.raw_data["open_evals"]:
             if item.get("model_name") == canonical or item.get("name") == canonical:
                 oe_data = item
                 break
-        
+
         for item in self.raw_data["lmsys_arena"]:
-            if (item.get("model_name") == canonical or item.get("name") == canonical or
-                item.get("title") == canonical):
+            if (
+                item.get("model_name") == canonical
+                or item.get("name") == canonical
+                or item.get("title") == canonical
+            ):
                 lmsys_data = item
                 break
-        
+
         return aa_data, oe_data, lmsys_data
 
-    def _calculate_hardware_fit(self, model_id: str, hf_meta: Dict, context_tier: str) -> tuple:
+    def _calculate_hardware_fit(
+        self, model_id: str, hf_meta: Dict, context_tier: str
+    ) -> tuple:
         """Calculate VRAM requirements and hardware fit."""
         size_gb = hf_meta.get("safetensors_size_gb", 0.0)
-        
+
         if size_gb == 0.0:
             parsed = parse_model_size(model_id)
-            size_gb = estimate_size_from_params(param_count=int(parsed * 1e9)) if parsed else 10.0
-        
+            size_gb = (
+                estimate_size_from_params(param_count=int(parsed * 1e9))
+                if parsed
+                else 10.0
+            )
+
         vram_req = VRAMCalculator(context_tier).calculate(size_gb)
-        
+
         is_moe = hf_meta.get("is_moe", False) or is_moe_model(model_id)[0]
-        
+
         hw_fit = {
             "gpu_id": "a100_80gb",
             "gpu_name": "A100 80GB",
             "gpu_count": 8,
             "total_vram_gb": 640,
             "status": "Compatible",
-            "recommended_parallelism": "Expert Parallelism (EP=8)" if is_moe else "Tensor Parallelism (TP=8) (Optimal)",
+            "recommended_parallelism": (
+                "Expert Parallelism (EP=8)"
+                if is_moe
+                else "Tensor Parallelism (TP=8) (Optimal)"
+            ),
             "multi_gpu_scaling": True,
             "is_moe_model": is_moe,
             "hosting_strategy": "Expert-Distributed" if is_moe else "TP-Sharded",
             "context_overhead_tier": context_tier,
             "tier": "data_center",
         }
-        
+
         all_fits = format_all_fits(vram_req, is_moe)
-        
+
         return hw_fit, all_fits, "Expert-Distributed" if is_moe else "TP-Sharded"
 
     def run(self) -> Path:
         """Execute the complete MHII data gathering pipeline with parallel HF fetching."""
         import time
         from loguru import logger
-        
+
         logger.info("=" * 60)
         logger.info("STARTING MHII DATA GATHERING PIPELINE")
         logger.info("=" * 60)
-        
+
         # Phase 1: Sequential web scraping
         logger.info("Phase 1: Web scraping...")
         phase1_start = time.time()
         performance_data = self._run_scraper()
         logger.info(f"Phase 1 complete in {time.time() - phase1_start:.1f}s")
-        
+
         # Phase 2: Sequential dataset loading (can run in parallel with phase 1 if needed)
         logger.info("Phase 2: Loading HF datasets...")
         phase2_start = time.time()
         self._load_datasets()
         logger.info(f"Phase 2 complete in {time.time() - phase2_start:.1f}s")
-        
+
         # Build name mappings
         all_names = (
-            [item.get("model_name") for item in performance_data if item.get("model_name")] +
-            self.dataset_loader.get_model_names("open_evals") +
-            self.dataset_loader.get_model_names("lmsys_arena")
+            [
+                item.get("model_name")
+                for item in performance_data
+                if item.get("model_name")
+            ]
+            + self.dataset_loader.get_model_names("open_evals")
+            + self.dataset_loader.get_model_names("lmsys_arena")
         )
-        
+
         unique_names = list(set(all_names))
         logger.info(f"Found {len(unique_names)} unique models")
-        
+
         self.matcher.build_mappings(
-            [item.get("model_name") for item in performance_data if item.get("model_name")],
+            [
+                item.get("model_name")
+                for item in performance_data
+                if item.get("model_name")
+            ],
             self.dataset_loader.get_model_names("open_evals"),
-            self.dataset_loader.get_model_names("lmsys_arena")
+            self.dataset_loader.get_model_names("lmsys_arena"),
         )
-        
+
         # Phase 3: PARALLEL HF metadata fetching (the main optimization!)
         logger.info("Phase 3: Parallel HF metadata fetching (20 threads)...")
         phase3_start = time.time()
-        hf_metadata_results = self.hf_service.parallel_batch_fetch(unique_names, max_workers=20)
+        hf_metadata_results = self.hf_service.parallel_batch_fetch(
+            unique_names, max_workers=20
+        )
         logger.info(f"Phase 3 complete in {time.time() - phase3_start:.1f}s")
-        
+
         # Phase 4: Process and merge results (fast, sequential)
         logger.info("Phase 4: Processing and merging results...")
         for model_name in unique_names:
             try:
                 canonical = self.matcher.get_canonical(model_name) or model_name
-                
+
                 aa_data, oe_data, lmsys_data = self._get_model_data(canonical)
-                
+
                 benchmarks = self.merger.merge(aa_data, oe_data, lmsys_data)
                 context_tier = get_recommended_context_tier(
-                    benchmarks.get("intelligence_index"),
-                    canonical
+                    benchmarks.get("intelligence_index"), canonical
                 )
-                
+
                 # Use pre-fetched metadata from parallel phase
                 hf_meta = hf_metadata_results.get(canonical)
                 if hf_meta is None:
                     hf_meta = self.hf_service.fetch(canonical)  # fallback
-                
+
                 hf_dict = {
                     "model_id": hf_meta.model_id,
                     "repo_id": hf_meta.repo_id,
@@ -222,13 +247,18 @@ class Orchestrator:
                     "num_experts": hf_meta.num_experts,
                     "metadata_status": hf_meta.metadata_status,
                 }
-                
-                hw_fit, all_fits, strategy = self._calculate_hardware_fit(canonical, hf_dict, context_tier)
-                
-                size_gb = hf_meta.safetensors_size_gb or (parse_model_size(canonical) * 2 if parse_model_size(canonical) else 10.0)
+
+                hw_fit, all_fits, strategy = self._calculate_hardware_fit(
+                    canonical, hf_dict, context_tier
+                )
+
+                parsed_size = parse_model_size(canonical)
+                size_gb = hf_meta.safetensors_size_gb or (
+                    parsed_size * 2 if parsed_size else 10.0
+                )
                 vram_calc = VRAMCalculator(context_tier)
                 vram_req = vram_calc.calculate(size_gb)
-                
+
                 record = {
                     "model_id": canonical,
                     "benchmarks": benchmarks,
@@ -243,27 +273,33 @@ class Orchestrator:
                     "source_status": hf_meta.metadata_status,
                     "all_gpu_compatibility": all_fits,
                     "hf_metadata": hf_dict,
-                    "match_confidence": self.matcher.mappings.get(canonical, type("X", (), {"match_score": None})()).match_score,
+                    "match_confidence": (
+                        self.matcher.mappings[canonical].match_score
+                        if canonical in self.matcher.mappings
+                        else None
+                    ),
                 }
-                
+
                 self.records.append(record)
-                
+
             except Exception as e:
                 logger.error(f"Error processing {model_name}: {e}")
                 self.errors.append({"model": model_name, "error": str(e)})
-        
+
         # Phase 5: Save output
         logger.info("Phase 5: Saving output...")
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(self.output_path, 'w', encoding='utf-8') as f:
+
+        with open(self.output_path, "w", encoding="utf-8") as f:
             for record in self.records:
-                f.write(json.dumps(record, ensure_ascii=False) + '\n')
-        
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
         total_time = time.time() - phase1_start
-        logger.success(f"Pipeline complete! {len(self.records)} records in {total_time:.1f}s")
+        logger.success(
+            f"Pipeline complete! {len(self.records)} records in {total_time:.1f}s"
+        )
         logger.success(f"Saved to {self.output_path}")
-        
+
         return self.output_path
 
     def get_report(self) -> Dict:
@@ -271,13 +307,27 @@ class Orchestrator:
         return {
             "total_models": len(self.records),
             "source_status": {
-                "verified": sum(1 for r in self.records if r["source_status"] == "verified"),
-                "missing_hf_metadata": sum(1 for r in self.records if r["source_status"] == "missing_hf_metadata"),
+                "verified": sum(
+                    1 for r in self.records if r["source_status"] == "verified"
+                ),
+                "missing_hf_metadata": sum(
+                    1
+                    for r in self.records
+                    if r["source_status"] == "missing_hf_metadata"
+                ),
             },
             "hosting_strategies": {
-                "single_gpu": sum(1 for r in self.records if r["hosting_strategy"] == "Single-GPU"),
-                "tp_sharded": sum(1 for r in self.records if r["hosting_strategy"] == "TP-Sharded"),
-                "expert_distributed": sum(1 for r in self.records if r["hosting_strategy"] == "Expert-Distributed"),
+                "single_gpu": sum(
+                    1 for r in self.records if r["hosting_strategy"] == "Single-GPU"
+                ),
+                "tp_sharded": sum(
+                    1 for r in self.records if r["hosting_strategy"] == "TP-Sharded"
+                ),
+                "expert_distributed": sum(
+                    1
+                    for r in self.records
+                    if r["hosting_strategy"] == "Expert-Distributed"
+                ),
             },
             "hf_cache_stats": self.hf_service.get_cache_stats(),
             "errors": self.errors,

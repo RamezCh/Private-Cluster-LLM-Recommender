@@ -17,7 +17,7 @@ from src.services.hardware import (
 
 __all__ = [
     "FuzzyModelMatcher",
-    "ModelMapping", 
+    "ModelMapping",
     "HFMetadataService",
     "HFModelMetadata",
     "HardwareService",

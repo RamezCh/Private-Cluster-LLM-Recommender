@@ -7,13 +7,13 @@ A local searchable database that maps LLM intelligence (benchmarks) directly to 
 ## Quick Start
 
 ```bash
-# Clone & setup
+# Setup
 cd data_gathering_pipeline
-python -m venv venv
-.\venv\Scripts\activate  # Windows
+python -m venv .venv
+.\.venv\Scripts\activate  # Windows
 pip install -r requirements.txt
 
-# Run (uses HF_TOKEN env var if set)
+# Run (set HF_TOKEN env var for authenticated requests)
 python main.py
 ```
 
@@ -22,19 +22,15 @@ python main.py
 ## A-Z Workflow Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                           MHII PIPELINE WORKFLOW                             │
-└──────────────────────────────────────────────────────────────────────────────┘
-
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
 │   INPUTS    │    │  PHASE 1    │    │  PHASE 2    │    │  PHASE 3    │    │  OUTPUTS    │
 │             │    │  Web        │    │  HF         │    │  Parallel   │    │             │
 │  Sources:   │───→│  Scraping   │───→│  Datasets   │───→│  Metadata   │───→│  master_    │
-│             │    │  (Sequential│    │  (Sequential│    │  Fetching   │    │  model_     │
-│  1. AA      │    │  Chrome)    │    │  2 sources) │    │  20 threads │    │  db.jsonl   │
-│  2. OpenEv  │    │             │    │             │    │             │    │             │
-│  3. LMSYS   │    │   ~5 min    │    │   ~2 min    │    │   ~1 min    │    │  logs/      │
-│  4. HF Hub  │    │             │    │             │    │             │    │  on PVC     │
+│             │    │  (Chrome)   │    │  (2 sources)│    │  20 threads │    │  model_     │
+│  1. AA      │    │             │    │             │    │             │    │  db.jsonl   │
+│  2. OpenEv  │    │   ~1 min    │    │   ~10 sec   │    │   ~5 sec    │    │             │
+│  3. LMSYS   │    │             │    │             │    │             │    │  logs/      │
+│  4. HF Hub  │    │             │    │             │    │             │    │             │
 └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
 
 LEGEND: AA = Artificial Analysis, OpenEv = OpenEvals, HF = HuggingFace
@@ -44,13 +40,13 @@ LEGEND: AA = Artificial Analysis, OpenEv = OpenEvals, HF = HuggingFace
 
 | Phase | Source | Action | Time | Parallelized? |
 |-------|--------|--------|------|---------------|
-| 1 | Artificial Analysis | Selenium scrapes leaderboard table | ~5 min | No |
-| 2 | OpenEvals + LMSYS | HF datasets library downloads | ~2 min | No |
-| 3 | HuggingFace Hub | API metadata for all models | ~1 min | **Yes (20 threads)** |
-| 4 | All sources | Merge, calculate VRAM, generate strategies | <1 min | No |
-| 5 | Output | Save to JSONL | <1 min | No |
+| 1 | Artificial Analysis | Selenium scrapes leaderboard table | ~1 min | No |
+| 2 | OpenEvals + LMSYS | HF datasets library downloads | ~10 sec | No |
+| 3 | HuggingFace Hub | API metadata for all models | ~5 sec | **Yes (20 threads)** |
+| 4 | All sources | Merge, calculate VRAM, generate strategies | <1 sec | No |
+| 5 | Output | Save to JSONL | <1 sec | No |
 
-**Total Runtime: ~7-9 minutes** (vs ~30 min if sequential)
+**Total Runtime: ~1.5–2 minutes**
 
 ---
 
@@ -71,12 +67,6 @@ data_gathering_pipeline/
 │       ├── fuzzy_matcher.py  # Name alignment
 │       ├── hf_metadata.py    # Parallelized API fetcher
 │       └── hardware.py       # VRAM calculations
-├── k8s/
-│   ├── README.md             # Cluster deployment guide (private)
-│   ├── mhii-pvc.yaml         # PVC (15Gi persistent storage)
-│   └── mhii-job.yaml         # Batch job manifest
-├── Dockerfile                # Container for cluster
-├── .dockerignore
 ├── main.py                   # CLI entry point
 ├── requirements.txt
 └── README.md
@@ -130,8 +120,8 @@ data_gathering_pipeline/
     "all_compatible_gpus": [
       {"name": "H100 80GB SXM5", "count": 4, "vram": 320, "score": 99.0}
     ],
-    "best_data_center": {...},
-    "best_consumer": {...}
+    "best_data_center": {},
+    "best_consumer": {}
   },
   "hf_metadata": {
     "repo_id": "deepseek-ai/DeepSeek-V4",
@@ -148,12 +138,11 @@ data_gathering_pipeline/
 ## Key Features
 
 1. **Comprehensive GPU Support** - BHT cluster, data center, consumer, laptop GPUs
-2. **Parallelized HF API** - 20 concurrent threads for 10x faster metadata fetching
-3. **Two-Tier HF Fetching** - Direct lookup + fallback search
+2. **Parallelized HF API** - 20 concurrent threads for ~10x faster metadata fetching
+3. **Two-Tier HF Fetching** - Direct repo lookup + search fallback
 4. **Fuzzy Name Matching** - Aligns names across sources (85% threshold)
 5. **MoE Detection** - Automatic Mixture-of-Experts architecture detection
 6. **Context-Aware VRAM** - Standard (32k), Extended (128k), Ultra (1M+) multipliers
-7. **Cluster-Ready** - Docker + K8s with PVC persistence for logs & data
 
 ---
 
@@ -161,8 +150,8 @@ data_gathering_pipeline/
 
 ```
 FP16: Size × 1.2 (Standard), × 1.5 (Extended), × 2.5 (Ultra)
-INT8: Size / 2 × multiplier
-INT4: Size / 4 × multiplier
+INT8: FP16 / 2
+INT4: FP16 / 4
 ```
 
 | Precision | Formula | Example (100GB model) |
@@ -183,68 +172,38 @@ INT4: Size / 4 × multiplier
 
 ---
 
-## Docker & K8s Support
+## Environment Variables
 
-The pipeline includes `Dockerfile` and `k8s/` manifests for containerized deployment:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HF_TOKEN` | `` | HuggingFace API token (recommended) |
+| `LOGURU_LEVEL` | `INFO` | Log level |
+| `LOGURU_ROTATION` | `10 MB` | Log file rotation size |
+| `LOGURU_RETENTION` | `7 days` | Log file retention |
+
+---
+
+## CLI Reference
 
 ```bash
-# Build container
-docker build -t mhii-pipeline:latest .
-
-# Run locally in container
-docker run --rm -e HF_TOKEN=hf_xxx mhii-pipeline:latest
+python main.py                    # Run full pipeline
+python main.py --scrape-only      # Only scrape Artificial Analysis
+python main.py --merge-only       # Merge using cached scrape data
+python main.py --report           # Report from existing JSONL
+python main.py --visible          # Show browser during scraping
+python main.py --output ./custom.jsonl   # Custom output path
 ```
-
-See `k8s/README.md` for Kubernetes cluster deployment instructions.
 
 ---
 
 ## Troubleshooting
 
-### Local Development
-
-```bash
-# ChromeDriver issues
-pip install --upgrade webdriver-manager
-
-# HF Dataset loading - set env var
-$env:HF_TOKEN = "hf_xxx"  # Windows
-# or
-export HF_TOKEN=hf_xxx    # Linux/Mac
-
-# Fuzzy matching issues - lower threshold
-python -c "from src.services import FuzzyModelMatcher; m = FuzzyModelMatcher(score_threshold=70)"
-```
-
-### Common Issues
-
 | Issue | Solution |
 |-------|----------|
-| HF 403/401 | Invalid or missing HF_TOKEN |
+| HF 403/401 | Set `$env:HF_TOKEN = "hf_xxx"` (Windows) or `export HF_TOKEN=hf_xxx` |
 | ChromeDriver error | Run `pip install --upgrade webdriver-manager` |
-| Empty output | Check logs for errors |
-
----
-
-## Local Usage
-
-### Full Pipeline
-```bash
-python main.py
-```
-
-### Partial Pipeline
-```bash
-python main.py --scrape-only   # Only scrape web data
-python main.py --merge-only    # Merge using cached data
-python main.py --report        # Generate report from existing data
-```
-
-### Custom Output
-```bash
-python main.py --output ./data/custom_db.jsonl
-python main.py --visible       # Show browser during scraping
-```
+| Empty LMSYS/ELO data | Verify dataset split — pipeline tries `full` then `latest` automatically |
+| Empty output | Check `logs/` for errors |
 
 ---
 
@@ -256,5 +215,5 @@ Educational and research purposes. Third-party data subject to their respective 
 
 - [Artificial Analysis](https://artificialanalysis.ai) - Real-time AI benchmarks
 - [OpenEvals](https://huggingface.co/datasets/OpenEvals/leaderboard-data) - Academic benchmarks
-- [LMSYS Arena](https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset) - Human preference data
+- [LMSYS Arena](https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset) - Human preference data  
 - [HuggingFace](https://huggingface.co) - Model metadata & datasets

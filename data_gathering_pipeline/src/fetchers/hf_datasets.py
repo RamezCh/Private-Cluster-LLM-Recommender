@@ -17,13 +17,12 @@ class HFDatasetLoader:
     def load_open_evals(self) -> List[Dict]:
         """Load OpenEvals/leaderboard-data dataset."""
         logger.info(f"Loading {HF_DATASETS['open_evals']}")
-        
+
         try:
             dataset = load_dataset(
                 HF_DATASETS["open_evals"],
                 split="train",
-                trust_remote_code=True,
-                token=self.token or None
+                token=self.token or None,
             )
             data = [dict(item) for item in dataset]
             self.datasets["open_evals"] = data
@@ -34,24 +33,26 @@ class HFDatasetLoader:
             return []
 
     def load_lmsys(self) -> List[Dict]:
-        """Load lmarena-ai/leaderboard-dataset dataset."""
+        """Load lmarena-ai/leaderboard-dataset dataset (config: text, split: full)."""
         logger.info(f"Loading {HF_DATASETS['lmsys_arena']}")
-        
-        try:
-            dataset = load_dataset(
-                HF_DATASETS["lmsys_arena"],
-                "text",
-                split="train",
-                trust_remote_code=True,
-                token=self.token or None
-            )
-            data = [dict(item) for item in dataset]
-            self.datasets["lmsys_arena"] = data
-            logger.success(f"Loaded {len(data)} records")
-            return data
-        except Exception as e:
-            logger.error(f"Failed to load: {e}")
-            return []
+
+        for split_name in ("full", "latest"):
+            try:
+                dataset = load_dataset(
+                    HF_DATASETS["lmsys_arena"],
+                    "text",
+                    split=split_name,
+                    token=self.token or None,
+                )
+                data = [dict(item) for item in dataset]
+                self.datasets["lmsys_arena"] = data
+                logger.success(f"Loaded {len(data)} records (split='{split_name}')")
+                return data
+            except Exception as e:
+                logger.warning(f"Split '{split_name}' failed: {e}")
+
+        logger.error("All LMSYS splits failed — ELO data will be unavailable")
+        return []
 
     def load_all(self) -> Dict[str, List[Dict]]:
         """Load all benchmark datasets."""
@@ -63,9 +64,9 @@ class HFDatasetLoader:
     def get_model_names(self, source: str) -> List[str]:
         """Extract model names from a dataset."""
         data = self.datasets.get(source, [])
-        
+
         name_keys = ["model_name", "name", "model", "model_id", "title"]
-        
+
         return [
             str(item[key])
             for item in data
