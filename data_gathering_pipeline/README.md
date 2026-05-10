@@ -13,11 +13,7 @@ python -m venv venv
 .\venv\Scripts\activate  # Windows
 pip install -r requirements.txt
 
-# Optional: Add HF token
-cp .env.example .env
-# Edit .env: HF_TOKEN=hf_xxx
-
-# Run
+# Run (uses HF_TOKEN env var if set)
 python main.py
 ```
 
@@ -83,7 +79,6 @@ data_gathering_pipeline/
 ├── .dockerignore
 ├── main.py                   # CLI entry point
 ├── requirements.txt
-├── .env.example
 └── README.md
 ```
 
@@ -212,9 +207,10 @@ See `k8s/README.md` for Kubernetes cluster deployment instructions.
 # ChromeDriver issues
 pip install --upgrade webdriver-manager
 
-# HF Dataset loading
-cp .env.example .env
-# Edit .env: HF_TOKEN=hf_xxx
+# HF Dataset loading - set env var
+$env:HF_TOKEN = "hf_xxx"  # Windows
+# or
+export HF_TOKEN=hf_xxx    # Linux/Mac
 
 # Fuzzy matching issues - lower threshold
 python -c "from src.services import FuzzyModelMatcher; m = FuzzyModelMatcher(score_threshold=70)"

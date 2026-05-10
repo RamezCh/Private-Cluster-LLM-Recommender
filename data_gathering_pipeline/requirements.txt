@@ -6,4 +6,3 @@ thefuzz>=0.20.0
 python-levenshtein>=0.21.0
 pandas>=2.1.0
 loguru>=0.7.2
-python-dotenv>=1.0.0

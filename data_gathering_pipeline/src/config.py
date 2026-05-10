@@ -5,8 +5,6 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict
 
-from dotenv import load_dotenv
-
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
 LOGS_DIR = BASE_DIR / "logs"
@@ -15,10 +13,6 @@ TEMP_DATA_DIR = DATA_DIR / "temp"
 DATA_DIR.mkdir(exist_ok=True, parents=True)
 LOGS_DIR.mkdir(exist_ok=True, parents=True)
 TEMP_DATA_DIR.mkdir(exist_ok=True, parents=True)
-
-_env_file = BASE_DIR / ".env"
-if _env_file.exists():
-    load_dotenv(_env_file)
 
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
