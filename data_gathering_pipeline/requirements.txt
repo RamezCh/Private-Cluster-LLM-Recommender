@@ -1,0 +1,9 @@
+selenium>=4.15.0
+webdriver-manager>=4.0.1
+datasets>=2.14.0
+huggingface-hub>=0.20.0
+thefuzz>=0.20.0
+python-levenshtein>=0.21.0
+pandas>=2.1.0
+loguru>=0.7.2
+python-dotenv>=1.0.0
