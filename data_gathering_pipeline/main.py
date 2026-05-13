@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """
-MHII Data Gathering Pipeline - Main Entry Point
+MHII Data Gathering Pipeline v2 — Main Entry Point
 
-Model-Hardware Intelligence Index (MHII)
+Model-Hardware Intelligence Index (MHII) v2
 Bridges the gap between "how smart a model is" and "can I actually host it?"
+
+TARGET: Open-weight, locally-hostable LLMs only
+Data sources:
+  1. open-llm-leaderboard (HF Dataset) — primary, ~4.5K rows
+  2. OpenCompass General — academic benchmarks
+  3. OpenCompass Academic — real-time academic benchmarks
 
 Usage:
     python main.py                    # Run full pipeline
-    python main.py --scrape-only      # Only run web scraper
-    python main.py --merge-only       # Only merge using cached data
+    python main.py --hf-only          # Run with HF dataset only (no OpenCompass)
+    python main.py --scrape-only      # Only scrape OpenCompass (save to cache)
+    python main.py --merge-only       # Only merge using cached OpenCompass data
     python main.py --report           # Generate report from existing data
 """
 
@@ -24,8 +31,8 @@ from loguru import logger
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
 
-from src.config import LOGS_DIR, OUTPUT_FILE, logging_config, HF_TOKEN
-from src.fetchers import WebScraper, HFDatasetLoader
+from src.config import LOGS_DIR, OUTPUT_FILE, logging_config
+from src.fetchers import OpenCompassScraper
 from src.orchestrator import Orchestrator
 
 
@@ -50,11 +57,13 @@ def setup_logging():
 
 
 def run_full(args):
-    """Execute the complete MHII pipeline."""
-    logger.info("Running full MHII pipeline")
+    """Execute the complete MHII v2 pipeline."""
+    logger.info("Running full MHII v2 pipeline")
 
     orchestrator = Orchestrator(output_path=args.output or OUTPUT_FILE)
-    output_path = orchestrator.run()
+    skip_opencompass = getattr(args, "hf_only", False)
+
+    output_path = orchestrator.run(skip_opencompass=skip_opencompass)
 
     report = orchestrator.get_report()
 
@@ -67,168 +76,53 @@ def run_full(args):
 
 
 def run_scrape_only(args):
-    """Run only the web scraper."""
-    logger.info("Running scrape-only mode")
+    """Run only the OpenCompass scraper (save to cache)."""
+    logger.info("Running scrape-only mode for OpenCompass")
 
-    scraper = WebScraper(headless=not args.visible)
-    data = scraper.scrape(save_temp=True)
+    scraper = OpenCompassScraper(headless=not args.visible)
 
-    print(f"\nScraped {len(data)} models")
+    try:
+        general, academic = scraper.scrape_both(
+            general_month="26-04",
+            academic_month="REALTIME",
+        )
+    finally:
+        scraper.close()
 
-    return data
+    if general:
+        scraper.save_temp(general, Path("data/temp/temp_oc_general.jsonl"))
+        print(f"\nGeneral leaderboard: {len(general)} models")
+
+    if academic:
+        scraper.save_temp(academic, Path("data/temp/temp_oc_academic.jsonl"))
+        print(f"Academic leaderboard: {len(academic)} models")
+
+    return general, academic
 
 
 def run_merge_only(args):
-    """Run only merge using cached data."""
-    logger.info("Running merge-only mode")
-
-    from src.config import TEMP_PERFORMANCE_FILE
-
-    if not TEMP_PERFORMANCE_FILE.exists():
-        logger.error("No cached data. Run full pipeline first.")
-        return None
+    """Run only merge using cached OpenCompass data (no scraping)."""
+    logger.info("Running merge-only mode (using cached OpenCompass data)")
 
     orchestrator = Orchestrator(output_path=args.output or OUTPUT_FILE)
-    orchestrator.raw_data["artificial_analysis"] = json.loads(
-        TEMP_PERFORMANCE_FILE.read_text()
-    )
 
-    dataset_loader = HFDatasetLoader()
-    orchestrator.raw_data["open_evals"] = dataset_loader.load_open_evals()
-    orchestrator.raw_data["lmsys_arena"] = dataset_loader.load_lmsys()
+    orchestrator._load_open_llm_leaderboard()
+    orchestrator._scrape_opencompass(skip_scrape=True, use_cache=True)
+    orchestrator._deduplicate()
+    orchestrator._merge_benchmarks()
+    orchestrator._enrich_hf_metadata(max_workers=20)
+    orchestrator._calculate_vram()
+    orchestrator._build_final_records()
+    path = orchestrator._save_output()
 
-    orchestrator.output_path = args.output or OUTPUT_FILE
+    report = orchestrator.get_report()
 
-    all_names = (
-        [
-            item.get("model_name")
-            for item in orchestrator.raw_data["artificial_analysis"]
-        ]
-        + dataset_loader.get_model_names("open_evals")
-        + dataset_loader.get_model_names("lmsys_arena")
-    )
+    print("\n" + "=" * 60)
+    print("MERGE-ONLY REPORT")
+    print("=" * 60)
+    print(json.dumps(report, indent=2))
 
-    unique_names = list(set(all_names))
-    logger.info(f"Processing {len(unique_names)} unique models")
-
-    orchestrator.matcher.build_mappings(
-        [
-            item.get("model_name")
-            for item in orchestrator.raw_data["artificial_analysis"]
-            if item.get("model_name")
-        ],
-        dataset_loader.get_model_names("open_evals"),
-        dataset_loader.get_model_names("lmsys_arena"),
-    )
-
-    from src.services import (
-        VRAMCalculator,
-        is_moe_model,
-        parse_model_size,
-        estimate_size_from_params,
-        get_recommended_context_tier,
-        format_all_fits,
-    )
-    from src.orchestrator import BenchmarkMerger
-
-    for model_name in unique_names:
-        try:
-
-            canonical = orchestrator.matcher.get_canonical(model_name) or model_name
-
-            aa_item = next(
-                (
-                    i
-                    for i in orchestrator.raw_data["artificial_analysis"]
-                    if i.get("model_name") == canonical
-                ),
-                None,
-            )
-            oe_item = next(
-                (
-                    i
-                    for i in orchestrator.raw_data["open_evals"]
-                    if i.get("model_name") == canonical or i.get("name") == canonical
-                ),
-                None,
-            )
-            lmsys_item = next(
-                (
-                    i
-                    for i in orchestrator.raw_data["lmsys_arena"]
-                    if i.get("name") == canonical or i.get("title") == canonical
-                ),
-                None,
-            )
-
-            benchmarks = BenchmarkMerger.merge(aa_item, oe_item, lmsys_item)
-            context_tier = get_recommended_context_tier(
-                benchmarks.get("intelligence_index"), canonical
-            )
-
-            hf_meta = orchestrator.hf_service.fetch(canonical)
-
-            size_gb = hf_meta.safetensors_size_gb
-            if size_gb == 0.0:
-                parsed = parse_model_size(canonical)
-                size_gb = (
-                    estimate_size_from_params(param_count=int(parsed * 1e9))
-                    if parsed
-                    else 10.0
-                )
-
-            vram_req = VRAMCalculator(context_tier).calculate(size_gb)
-
-            is_moe = hf_meta.is_moe or is_moe_model(canonical)[0]
-            all_fits = format_all_fits(vram_req, is_moe)
-
-            hw_fit = {
-                "gpu_id": "a100_80gb",
-                "gpu_name": "A100 80GB",
-                "gpu_count": 8,
-                "total_vram_gb": 640,
-                "status": "Compatible",
-                "is_moe_model": is_moe,
-                "hosting_strategy": "Expert-Distributed" if is_moe else "TP-Sharded",
-                "context_overhead_tier": context_tier,
-                "tier": "data_center",
-            }
-
-            orchestrator.records.append(
-                {
-                    "model_id": canonical,
-                    "benchmarks": benchmarks,
-                    "vram_gb": {
-                        "fp16": vram_req.fp16_gb,
-                        "int8": vram_req.int8_gb,
-                        "int4": vram_req.int4_gb,
-                        "model_base_gb": vram_req.model_size_gb,
-                    },
-                    "hardware_fit": hw_fit,
-                    "hosting_strategy": (
-                        "Expert-Distributed" if is_moe else "TP-Sharded"
-                    ),
-                    "source_status": hf_meta.metadata_status,
-                    "all_gpu_compatibility": all_fits,
-                    "hf_metadata": {
-                        "repo_id": hf_meta.repo_id,
-                        "safetensors_size_gb": hf_meta.safetensors_size_gb,
-                    },
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Error: {model_name}: {e}")
-
-    orchestrator.output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(orchestrator.output_path, "w", encoding="utf-8") as f:
-        for record in orchestrator.records:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-    logger.success(f"Saved {len(orchestrator.records)} records")
-
-    return orchestrator.output_path
+    return path
 
 
 def run_report(args):
@@ -244,29 +138,50 @@ def run_report(args):
         for line in f:
             records.append(json.loads(line))
 
-    strategies: defaultdict = defaultdict(int)
-    moe_count = 0
-    avg_elo = []
+    total = len(records)
 
+    benchmarks = defaultdict(int)
+    for r in records:
+        for key in ["coding", "math", "reasoning", "intelligence_index"]:
+            if r.get("benchmarks", {}).get(key) is not None:
+                benchmarks[key] += 1
+
+    strategies = defaultdict(int)
     for r in records:
         strategies[r.get("hosting_strategy", "Unknown")] += 1
-        if r.get("hardware_fit", {}).get("is_moe_model"):
-            moe_count += 1
-        if r.get("benchmarks", {}).get("elo"):
-            avg_elo.append(r["benchmarks"]["elo"])
+
+    moe_count = sum(1 for r in records if r.get("is_moe"))
+
+    multi_source = sum(
+        1 for r in records if len(r.get("_sources", [])) > 1
+    )
+
+    avg_intel = []
+    for r in records:
+        idx = r.get("benchmarks", {}).get("intelligence_index")
+        if idx is not None:
+            avg_intel.append(idx)
 
     report = {
         "generated_at": datetime.now().isoformat(),
-        "total_models": len(records),
-        "architecture_types": {"moe": moe_count, "dense": len(records) - moe_count},
-        "hosting_strategies": strategies,
-        "benchmark_averages": {
-            "avg_elo": round(sum(avg_elo) / len(avg_elo), 2) if avg_elo else None,
+        "total_models": total,
+        "architecture_types": {"moe": moe_count, "dense": total - moe_count},
+        "hosting_strategies": dict(strategies),
+        "benchmark_coverage": {
+            key: f"{count} models ({round(count/total*100, 1) if total else 0}%)"
+            for key, count in sorted(benchmarks.items(), key=lambda x: x[1], reverse=True)
+        },
+        "multi_source_models": multi_source,
+        "avg_intelligence_index": round(sum(avg_intel) / len(avg_intel), 2) if avg_intel else None,
+        "source_status": {
+            "verified": sum(1 for r in records if r.get("source_status") == "verified"),
+            "missing_hf": sum(1 for r in records if r.get("source_status") == "missing_hf_metadata"),
+            "merged": sum(1 for r in records if r.get("source_status") == "merged"),
         },
     }
 
     print("\n" + "=" * 60)
-    print("MHII DATABASE REPORT")
+    print("MHII v2 DATABASE REPORT")
     print("=" * 60)
     print(json.dumps(report, indent=2))
 
@@ -276,34 +191,47 @@ def run_report(args):
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="MHII Data Gathering Pipeline",
+        description="MHII v2 Data Gathering Pipeline — Open Source LLM Recommender",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py               Run full pipeline
-  python main.py --scrape-only  Only scrape web data
-  python main.py --merge-only   Only merge (use cached)
-  python main.py --report       Generate report from data
+  python main.py               Run full pipeline (~5-8 min)
+  python main.py --hf-only     Run with HF dataset only (skip OpenCompass scrape)
+  python main.py --scrape-only Only scrape OpenCompass (saves to cache)
+  python main.py --merge-only  Merge using cached data (no scraping)
+  python main.py --report      Generate report from existing JSONL
+  python main.py --visible     Show browser during OpenCompass scraping
+  python main.py --output ./custom.jsonl   Custom output path
         """,
     )
 
     parser.add_argument(
-        "--scrape-only", action="store_true", help="Run only web scraper"
+        "--hf-only", action="store_true",
+        help="Run with open-llm-leaderboard only (skip OpenCompass)"
     )
     parser.add_argument(
-        "--merge-only", action="store_true", help="Merge using cached data"
+        "--scrape-only", action="store_true",
+        help="Only scrape OpenCompass leaderboards (save to cache)"
     )
     parser.add_argument(
-        "--report", action="store_true", help="Generate report from data"
+        "--merge-only", action="store_true",
+        help="Merge using cached OpenCompass data (no scraping)"
     )
     parser.add_argument(
-        "--output", type=Path, default=OUTPUT_FILE, help="Output file path"
+        "--report", action="store_true",
+        help="Generate report from existing data"
     )
     parser.add_argument(
-        "--input", type=Path, default=OUTPUT_FILE, help="Input file for --report"
+        "--output", type=Path, default=OUTPUT_FILE,
+        help="Output file path"
     )
     parser.add_argument(
-        "--visible", action="store_true", help="Show browser during scraping"
+        "--input", type=Path, default=OUTPUT_FILE,
+        help="Input file for --report"
+    )
+    parser.add_argument(
+        "--visible", action="store_true",
+        help="Show browser during OpenCompass scraping"
     )
 
     args = parser.parse_args()

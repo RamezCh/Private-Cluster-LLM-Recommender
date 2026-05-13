@@ -96,38 +96,109 @@ class HFModelMetadata:
 
 
 @dataclass
-class ModelMapping:
-    """Result of fuzzy matching between model names across sources."""
-
-    canonical_name: str
-    sources: Dict[str, str]
-    match_score: int
-    is_confident: bool
-
-
-@dataclass
-class FinalModelRecord:
-    """Complete model record for master_model_db.jsonl."""
+class OpenWeightModelRecord:
+    """The new master record schema — one per locally-hostable model."""
 
     model_id: str
-    benchmarks: Dict[str, Any] = field(default_factory=lambda: {
-        "coding": None,
-        "math": None,
-        "reasoning": None,
-        "elo": None,
-        "intelligence_index": None,
-        "throughput_tokens_per_sec": None,
-        "vibes_score": None,
-    })
+    hf_repo_id: Optional[str] = None
+    base_model: Optional[str] = None
+    model_type: str = "unknown"
+    architecture: Optional[str] = None
+    precision: Optional[str] = None
+
+    params_billions: Optional[float] = None
+    safetensors_size_gb: float = 0.0
+
+    benchmarks: BenchmarkData = field(default_factory=BenchmarkData)
+
+    extended_benchmarks: Dict[str, Any] = field(default_factory=dict)
+
+    is_moe: bool = False
+    num_experts: Optional[int] = None
+
+    license: Optional[str] = None
+    hub_likes: int = 0
+    generation: int = 0
+
     vram_gb: Dict[str, float] = field(default_factory=dict)
     hardware_fit: Dict[str, Any] = field(default_factory=dict)
     hosting_strategy: str = "unknown"
+
     source_status: str = "unknown"
     all_gpu_compatibility: Dict[str, Any] = field(default_factory=dict)
     hf_metadata: Optional[Dict] = None
-    source_variants: Optional[Dict] = None
     match_confidence: Optional[int] = None
+
     raw_data: Optional[Dict] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "model_id": self.model_id,
+            "hf_repo_id": self.hf_repo_id,
+            "base_model": self.base_model,
+            "model_type": self.model_type,
+            "architecture": self.architecture,
+            "precision": self.precision,
+            "params_billions": self.params_billions,
+            "safetensors_size_gb": self.safetensors_size_gb,
+            "benchmarks": {
+                "coding": self.benchmarks.coding,
+                "math": self.benchmarks.math,
+                "reasoning": self.benchmarks.reasoning,
+                "elo": self.benchmarks.elo,
+                "intelligence_index": self.benchmarks.intelligence_index,
+            },
+            "extended_benchmarks": self.extended_benchmarks,
+            "is_moe": self.is_moe,
+            "num_experts": self.num_experts,
+            "license": self.license,
+            "hub_likes": self.hub_likes,
+            "generation": self.generation,
+            "vram_gb": self.vram_gb,
+            "hardware_fit": self.hardware_fit,
+            "hosting_strategy": self.hosting_strategy,
+            "source_status": self.source_status,
+            "all_gpu_compatibility": self.all_gpu_compatibility,
+            "hf_metadata": self.hf_metadata,
+            "match_confidence": self.match_confidence,
+        }
+
+
+@dataclass
+class OpenLLMLeaderboardRow:
+    """Normalized row from open-llm-leaderboard dataset."""
+
+    model: str
+    fullname: str
+    base_model: Optional[str]
+    params_billions: float
+    average: float
+    is_moe: bool
+    architecture: str
+    precision: str
+    model_type: str
+    license: str
+    hub_likes: int
+    generation: int
+    available_on_hub: bool
+    flagged: bool
+    chat_template: bool
+    merged: bool
+    official_providers: bool
+    benchmarks: Dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class OpenCompassRow:
+    """Normalized row from OpenCompass leaderboard scraper."""
+
+    model_name: str
+    provider: Optional[str]
+    overall_score: Optional[float]
+    benchmarks: Dict[str, float] = field(default_factory=dict)
+    rank: Optional[int] = None
+    submission_date: Optional[str] = None
+    source: str = "general"
 
 
 @dataclass
@@ -141,3 +212,15 @@ class PipelineReport:
     hf_metadata_stats: Dict[str, Any]
     pipeline_errors: List[Dict]
     output_file: str
+    dedup_stats: Dict[str, int] = field(default_factory=dict)
+    benchmark_coverage: Dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class ModelMapping:
+    """Result of fuzzy matching between model names across sources."""
+
+    canonical_name: str
+    sources: Dict[str, str] = field(default_factory=dict)
+    match_score: int = 100
+    is_confident: bool = True

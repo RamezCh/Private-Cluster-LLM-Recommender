@@ -2,9 +2,8 @@
 
 This module is kept for reference but is NOT used in the v2 pipeline.
 The v2 pipeline uses OpenCompass (opencompass.py) instead of Artificial Analysis.
-This file is preserved in case the original is ever needed again.
 
-To use: copy this content back from git history.
+If you need to use this in the future, copy the contents from git history.
 """
 
 import time

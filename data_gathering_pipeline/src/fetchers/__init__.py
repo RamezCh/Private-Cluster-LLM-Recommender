@@ -1,6 +1,10 @@
-"""Fetchers module - Data collection from various sources."""
+"""Fetchers module — data loading from all pipeline sources."""
 
-from src.fetchers.web_scraper import WebScraper, PerformanceData
-from src.fetchers.hf_datasets import HFDatasetLoader
+from src.fetchers.hf_ollm import HFOpenLLMLeaderboardLoader
+from src.fetchers.opencompass import OpenCompassScraper, OpenCompassRow
 
-__all__ = ["WebScraper", "PerformanceData", "HFDatasetLoader"]
+__all__ = [
+    "HFOpenLLMLeaderboardLoader",
+    "OpenCompassScraper",
+    "OpenCompassRow",
+]

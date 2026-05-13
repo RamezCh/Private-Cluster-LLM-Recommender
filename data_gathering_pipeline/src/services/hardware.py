@@ -79,7 +79,7 @@ class VRAMCalculator:
 
     def __init__(self, context_tier: str = "standard_32k"):
         self.context_tier = context_tier
-        self.multiplier = VRAM_CONFIG.kv_cache_multipliers.get(context_tier, 1.2)
+        self.multiplier = VRAM_CONFIG["kv_cache_multipliers"].get(context_tier, 1.2)
 
     def calculate(self, model_size_gb: float) -> VRAMRequirements:
         """Calculate VRAM requirements with context overhead."""

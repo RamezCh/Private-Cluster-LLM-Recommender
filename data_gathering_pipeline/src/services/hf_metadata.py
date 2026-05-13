@@ -79,8 +79,14 @@ class HFMetadataService:
 
     def _create_candidates(self, model_name: str) -> List[str]:
         """Generate possible HuggingFace repo_id candidates."""
-        norm = model_name.lower()
         candidates = []
+
+        if "/" in model_name:
+            candidates.append(model_name)
+            org, _, rest = model_name.partition("/")
+            candidates.append(f"{org}/{rest.replace(' ', '-').replace('_', '-')}")
+
+        norm = model_name.lower()
 
         org_map = {
             "gpt": "openai",
@@ -114,56 +120,72 @@ class HFMetadataService:
 
         return list(dict.fromkeys(candidates))
 
-    def fetch(self, model_name: str) -> HFModelMetadata:
-        """Two-tier metadata fetching: direct lookup then fallback search."""
+    def fetch(self, model_name: str, params_billions: Optional[float] = None) -> HFModelMetadata:
+        """Two-tier metadata fetching: direct lookup then fallback search.
+
+        Args:
+            model_name: The model name to look up
+            params_billions: Optional param count from dataset for size estimation fallback
+        """
         if model_name in self.cache:
             return self.cache[model_name]
 
         if model_name in self.failed_lookups:
-            return HFModelMetadata(
-                model_id=model_name, metadata_status="missing_hf_metadata"
-            )
+            return self._make_missing(model_name, params_billions)
 
         logger.info(f"Fetching metadata for: {model_name}")
 
-        # Tier 1: direct repo_id candidates
-        for candidate in self._create_candidates(model_name):
-            try:
-                info = model_info(candidate)
-                repo_id = info.id if hasattr(info, "id") else candidate
+        for attempt in range(3):
+            for candidate in self._create_candidates(model_name):
+                try:
+                    info = model_info(candidate, timeout=15)
+                    repo_id = info.id if hasattr(info, "id") else candidate
 
-                is_moe, num_experts = self._detect_moe(info)
+                    is_moe, num_experts = self._detect_moe(info)
 
-                metadata = HFModelMetadata(
-                    model_id=model_name,
-                    repo_id=repo_id,
-                    safetensors_size_gb=round(self._extract_size(info), 3),
-                    parameter_count=(
-                        getattr(info, "config", {}).get("num_parameters")
-                        if hasattr(info, "config")
-                        else None
-                    ),
-                    is_moe=is_moe,
-                    num_experts=num_experts,
-                    model_type=getattr(info, "model_type", None)
-                    or (
-                        info.config.get("model_type")
-                        if hasattr(info, "config")
-                        else None
-                    ),
-                    library_name=getattr(info, "library_name", None),
-                    tags=[str(t) for t in getattr(info, "tags", [])],
-                    metadata_status="verified",
-                )
+                    metadata = HFModelMetadata(
+                        model_id=model_name,
+                        repo_id=repo_id,
+                        safetensors_size_gb=round(self._extract_size(info), 3),
+                        parameter_count=(
+                            getattr(info, "config", {}).get("num_parameters")
+                            if hasattr(info, "config")
+                            else None
+                        ),
+                        is_moe=is_moe,
+                        num_experts=num_experts,
+                        model_type=getattr(info, "model_type", None)
+                        or (
+                            info.config.get("model_type")
+                            if hasattr(info, "config")
+                            else None
+                        ),
+                        library_name=getattr(info, "library_name", None),
+                        tags=[str(t) for t in getattr(info, "tags", [])],
+                        metadata_status="verified",
+                    )
 
-                self.cache[model_name] = metadata
-                logger.success(
-                    f"Found: {repo_id} ({metadata.safetensors_size_gb:.2f}GB)"
-                )
-                return metadata
+                    self.cache[model_name] = metadata
+                    logger.success(
+                        f"Found: {repo_id} ({metadata.safetensors_size_gb:.2f}GB)"
+                    )
+                    return metadata
 
-            except Exception:
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "403" in err_str or "404" in err_str or "repo.*not.*found" in err_str:
+                        break
+                    if "429" in err_str or "rate limit" in err_str or "forbidden" in err_str:
+                        if attempt < 2:
+                            import time
+                            wait = (attempt + 1) * 5
+                            logger.debug(f"Rate limited, retrying in {wait}s...")
+                            time.sleep(wait)
+                            break
+                    continue
+            else:
                 continue
+            break
 
         # Tier 2: search fallback
         logger.info(f"Tier 2: Searching for '{model_name}'")
@@ -202,8 +224,37 @@ class HFMetadataService:
         logger.warning(f"Failed to find metadata for: {model_name}")
         self.failed_lookups.append(model_name)
 
+        return self._make_missing(model_name, params_billions)
+
+    def _make_missing(
+        self, model_name: str, params_billions: Optional[float] = None
+    ) -> HFModelMetadata:
+        """Create a missing metadata record with estimated size from params."""
+        if params_billions and params_billions > 0:
+            estimated_gb = round(params_billions * 2, 2)
+            return HFModelMetadata(
+                model_id=model_name,
+                repo_id=None,
+                safetensors_size_gb=estimated_gb,
+                parameter_count=int(params_billions * 1e9),
+                is_moe=False,
+                num_experts=None,
+                model_type=None,
+                library_name=None,
+                tags=[],
+                metadata_status="rate_limited_estimated",
+            )
         return HFModelMetadata(
-            model_id=model_name, metadata_status="missing_hf_metadata"
+            model_id=model_name,
+            repo_id=None,
+            safetensors_size_gb=0.0,
+            parameter_count=None,
+            is_moe=False,
+            num_experts=None,
+            model_type=None,
+            library_name=None,
+            tags=[],
+            metadata_status="missing_hf_metadata",
         )
 
     def batch_fetch(self, model_names: List[str]) -> Dict[str, HFModelMetadata]:
@@ -215,6 +266,7 @@ class HFMetadataService:
         model_names: List[str],
         max_workers: int = 20,
         timeout: float = 30.0,
+        params_map: Optional[Dict[str, float]] = None,
     ) -> Dict[str, HFModelMetadata]:
         """
         Fetch metadata for multiple models IN PARALLEL using ThreadPoolExecutor.
@@ -225,12 +277,12 @@ class HFMetadataService:
             model_names: List of model names to fetch
             max_workers: Number of concurrent threads (default: 20)
             timeout: Timeout per model in seconds (default: 30)
+            params_map: Optional dict of {model_name: params_billions} for size estimation fallback
 
-        Returns:
-            Dict mapping model names to their metadata
         """
         results: Dict[str, HFModelMetadata] = {}
         start_time = time.time()
+        params_map = params_map or {}
 
         logger.info(
             f"Starting parallel fetch for {len(model_names)} models ({max_workers} workers)"
@@ -239,11 +291,11 @@ class HFMetadataService:
         def fetch_with_timeout(name: str):
             """Fetch with individual error handling."""
             try:
-                metadata = self.fetch(name)
+                metadata = self.fetch(name, params_map.get(name))
                 return (name, metadata)
             except Exception as e:
                 logger.warning(f"Error fetching {name}: {e}")
-                return (name, HFModelMetadata(model_id=name, metadata_status="error"))
+                return (name, self._make_missing(name, params_map.get(name)))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
