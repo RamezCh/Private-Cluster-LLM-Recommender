@@ -33,7 +33,7 @@ uvicorn api:app --reload --port 8000
 ### 4. Run Tests
 
 ```bash
-python tests/test_cases.py
+pytest tests/
 ```
 
 ## Architecture
@@ -42,23 +42,38 @@ python tests/test_cases.py
 llm_recommender/
 ├── backend/
 │   ├── api.py                    # FastAPI server
-│   ├── services/
-│   │   ├── recommender.py        # Hybrid scoring engine
-│   │   ├── embedding_service.py  # FAISS + sentence-transformers
-│   │   ├── hardware_parser.py    # Parse "8 A100s"
-│   │   ├── use_case_detector.py  # Keyword-based use case detection
-│   │   └── wandb_logger.py       # Weights & Biases integration
-│   └── models.py                 # Pydantic data models
+│   ├── logging.py                # Loguru logging setup
+│   ├── models.py                 # Pydantic data models
+│   └── services/
+│       ├── recommender.py        # Hybrid scoring engine
+│       ├── embedding_service.py  # FAISS + sentence-transformers
+│       ├── parser.py             # Hardware parsing & use case detection
+│       └── wandb_logger.py       # Weights & Biases integration
 ├── frontend/
 │   └── main.py                   # Streamlit chat interface
+├── data_gathering_pipeline/      # Data collection & processing
+│   ├── src/
+│   │   ├── orchestrator.py       # Pipeline orchestration
+│   │   ├── gpu_catalog.py        # GPU specifications
+│   │   ├── models.py             # Data models
+│   │   ├── config.py             # Configuration
+│   │   ├── fetchers/             # Web scrapers & API clients
+│   │   └── services/             # Data processing services
+│   └── requirements.txt
 ├── embeddings/
 │   └── build_index.py            # Pre-compute FAISS index
 ├── config/
-│   └── weights.py                # Use-case → benchmark weights
+│   └── config.py                 # GPU catalog, weights, keywords
 ├── tests/
-│   └── test_cases.py             # Validation test cases
-└── data/
-    └── master_model_db.jsonl     # 1,815 open-weight models
+│   ├── test_cases.py             # Validation test cases
+│   ├── test_hardware_parser.py   # Hardware parser tests
+│   └── test_api.py               # API endpoint tests
+├── .streamlit/
+│   └── config.toml               # Streamlit configuration
+├── data/
+│   └── master_model_db.jsonl     # Open-weight model database
+├── logs/                         # Application logs
+└── wandb/                        # Weights & Biases runs
 ```
 
 ## How It Works
@@ -90,3 +105,10 @@ Set `WANDB_API_KEY` environment variable to enable experiment tracking.
 export WANDB_API_KEY=your_key
 streamlit run frontend/main.py
 ```
+
+## Configuration
+
+- **GPU Catalog**: Edit `config/config.py` to add/modify GPU specifications
+- **Use Case Keywords**: Modify `USE_CASE_KEYWORDS` in `config/config.py`
+- **Benchmark Weights**: Adjust `USE_CASE_BENCHMARK_WEIGHTS` in `config/config.py`
+- **Streamlit Settings**: Edit `.streamlit/config.toml`

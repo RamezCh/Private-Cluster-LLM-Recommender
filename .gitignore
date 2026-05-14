@@ -74,6 +74,10 @@ temp/
 master_model_db.jsonl
 temp_performance.jsonl
 
+# Index files
+*.index
+faiss_index/
+
 # Kubernetes cluster configs (namespace-specific, keep private)
 k8s/
 
@@ -88,3 +92,12 @@ docker-compose*.yml
 credentials.json
 secrets.yaml
 *.secret
+
+# Weights & Biases
+wandb/
+
+# Streamlit
+.streamlit/
+
+# Model cache
+model_cache/
