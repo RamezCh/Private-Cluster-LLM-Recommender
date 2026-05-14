@@ -1,0 +1,1 @@
+{"top_model_score":0.694531703636394,"top_model":"maldv/Awqward2.5-32B-Instruct","num_returned":3,"_wandb":{"runtime":8},"use_case":"coding","latency_ms":7768.12219619751,"num_compatible":1812,"hardware":"1x A100 80GB","_step":0,"query":"python code generation","_timestamp":1.7787769964556248e+09,"_runtime":8}

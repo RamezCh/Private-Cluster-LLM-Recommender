@@ -45,6 +45,8 @@ from src.services import (
     estimate_size_from_params,
     get_recommended_context_tier,
     format_all_fits,
+    get_gpu_config,
+    get_total_vram,
 )
 
 
@@ -267,9 +269,9 @@ class Orchestrator:
 
         hw_fit = {
             "gpu_id": "a100_80gb",
-            "gpu_name": "A100 80GB",
+            "gpu_name": get_gpu_config("a100_80gb").name,
             "gpu_count": 8,
-            "total_vram_gb": 640,
+            "total_vram_gb": get_total_vram("a100_80gb", 8),
             "status": "Compatible",
             "is_moe_model": is_moe,
             "hosting_strategy": "Expert-Distributed" if is_moe else "TP-Sharded",

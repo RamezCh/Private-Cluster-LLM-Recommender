@@ -1,0 +1,1 @@
+{"hardware":"8x A100 80GB","top_model_score":0.7022630643785186,"_runtime":8,"top_model":"meta-llama/Llama-3.3-70B-Instruct","_wandb":{"runtime":8},"num_compatible":1815,"num_returned":5,"_timestamp":1.7787820732260833e+09,"_step":9,"latency_ms":54.29220199584961,"query":"coding 8 A100s","use_case":"coding"}

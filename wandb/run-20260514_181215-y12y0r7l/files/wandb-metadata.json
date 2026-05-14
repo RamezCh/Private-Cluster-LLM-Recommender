@@ -1,0 +1,15 @@
+{
+  "os": "Windows-11-10.0.26200-SP0",
+  "python": "CPython 3.12.6",
+  "startedAt": "2026-05-14T16:12:15.567243Z",
+  "program": "<python with no main file>",
+  "git": {
+    "remote": "https://github.com/RamezCh/Private-Cluster-LLM-Recommender.git",
+    "commit": "e2d620ec61331c0a6e32ef587c31fb9c0e5c0dff"
+  },
+  "email": "chreideramez@gmail.com",
+  "root": "C:\\Users\\ramiz\\OneDrive\\Desktop\\BHT\\BHT - Assignments\\Semester 2\\Data Science Workflow\\OpenCode LLM Recommender",
+  "host": "RamezCh",
+  "executable": "C:\\Python312\\python.exe",
+  "writerId": "g23opu91nkzg0y7ob4mhgbcvj507h2i3"
+}

@@ -1,18 +1,18 @@
-import json
-import sys
-import time
+"""Pytest-based validation test cases for the LLM recommender."""
+
+import pytest
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from backend.services.hardware_parser import parse_hardware_input, ParsedHardware
-from backend.services.recommender import get_recommender, ScoredModel
+from backend.services.parser import parse_hardware_input, ParsedHardware
+from backend.services.recommender import get_recommender, reset_recommender
+from backend.services.wandb_logger import reset_wandb_logger
 
 
 @dataclass
 class TestCase:
+    """Test case definition."""
+
     name: str
     hardware_text: str
     use_case: str
@@ -32,7 +32,7 @@ TEST_CASES = [
         expected_model_pattern="llama",
         expected_min_coding=80.0,
         expected_params_range=(60, 100),
-        description="8x A100 80GB should recommend top coding models like Llama-3.3-70B"
+        description="8x A100 80GB should recommend top coding models like Llama-3.3-70B",
     ),
     TestCase(
         name="TC-02: 1x H200 for Math",
@@ -42,7 +42,7 @@ TEST_CASES = [
         expected_model_pattern=None,
         expected_min_coding=60.0,
         expected_params_range=(30, 100),
-        description="H200 141GB should handle large math models"
+        description="H200 141GB should handle large math models",
     ),
     TestCase(
         name="TC-03: 4x RTX 4090 for Creative Writing",
@@ -52,7 +52,7 @@ TEST_CASES = [
         expected_model_pattern=None,
         expected_min_coding=50.0,
         expected_params_range=(7, 50),
-        description="4x RTX 4090 (96GB) can handle ~30-40B models"
+        description="4x RTX 4090 (96GB) can handle ~30-40B models",
     ),
     TestCase(
         name="TC-04: MacBook M3 Max for On-Device Inference",
@@ -62,7 +62,7 @@ TEST_CASES = [
         expected_model_pattern=None,
         expected_min_coding=40.0,
         expected_params_range=(7, 50),
-        description="M3 Max 128GB can handle larger models than consumer GPUs"
+        description="M3 Max 128GB can handle larger models than consumer GPUs",
     ),
     TestCase(
         name="TC-05: 1x A100 40GB Memory-Constrained Coding",
@@ -72,116 +72,176 @@ TEST_CASES = [
         expected_model_pattern=None,
         expected_min_coding=60.0,
         expected_params_range=(7, 30),
-        description="A100 40GB requires smaller models or INT4 quantization"
+        description="A100 40GB requires smaller models or INT4 quantization",
     ),
 ]
 
 
-def run_test_case(test_case: TestCase, verbose: bool = True) -> dict:
-    result = {
-        "name": test_case.name,
-        "passed": False,
-        "error": None,
-        "recommendations": [],
-        "latency_ms": 0,
-        "checks": {}
-    }
-    
-    try:
-        start_time = time.time()
-        
-        hardware = parse_hardware_input(test_case.hardware_text)
-        
-        if hardware is None:
-            result["error"] = f"Failed to parse hardware: '{test_case.hardware_text}'"
-            return result
-        
-        recommender = get_recommender()
-        recommendations = recommender.recommend(
-            hardware=hardware,
-            use_case_text=test_case.use_case,
-            user_query=test_case.user_query,
-            top_k=5
-        )
-        
-        result["latency_ms"] = (time.time() - start_time) * 1000
-        result["recommendations"] = recommendations
-        
-        if not recommendations:
-            result["error"] = "No recommendations returned"
-            return result
-        
-        top_model = recommendations[0]
-        
-        result["checks"]["has_recommendations"] = len(recommendations) > 0
-        result["checks"]["top_model_params"] = (
-            test_case.expected_params_range[0] <= top_model.params_billions <= test_case.expected_params_range[1]
-        )
-        result["checks"]["top_model_coding"] = top_model.coding >= test_case.expected_min_coding
-        
-        if test_case.expected_model_pattern:
-            result["checks"]["matches_pattern"] = (
-                test_case.expected_model_pattern.lower() in top_model.model_id.lower()
-            )
-        
-        result["passed"] = all(result["checks"].values())
-        
-        if verbose:
-            print(f"\n{'='*60}")
-            print(f"Test: {test_case.name}")
-            print(f"{'='*60}")
-            print(f"Hardware: {test_case.hardware_text}")
-            print(f"  -> {hardware.count}x {hardware.gpu_name} ({hardware.total_vram_gb} GB)")
-            print(f"Use Case: {test_case.use_case}")
-            print(f"Latency: {result['latency_ms']:.1f} ms")
-            print(f"\nTop 3 Recommendations:")
-            for i, rec in enumerate(recommendations[:3], 1):
-                print(f"  {i}. {rec.model_id}")
-                print(f"     Params: {rec.params_billions:.1f}B | Coding: {rec.coding:.1f}")
-                print(f"     Score: {rec.final_score:.3f}")
-            print(f"\nChecks:")
-            for check, passed in result["checks"].items():
-                status = "[PASS]" if passed else "[FAIL]"
-                print(f"  {status} {check}: {passed}")
-            print(f"\nResult: {'PASSED' if result['passed'] else 'FAILED'}")
-    
-    except Exception as e:
-        result["error"] = str(e)
-    
-    return result
+@pytest.fixture(scope="module")
+def recommender():
+    """Get recommender instance for all tests."""
+    reset_recommender()
+    reset_wandb_logger()
+    return get_recommender()
 
 
-def run_all_tests(verbose: bool = True) -> dict:
-    summary = {
-        "total": len(TEST_CASES),
-        "passed": 0,
-        "failed": 0,
-        "results": []
-    }
-    
-    print("\n" + "="*70)
-    print("RUNNING ALL TEST CASES")
-    print("="*70)
-    
-    for test_case in TEST_CASES:
-        result = run_test_case(test_case, verbose=verbose)
-        summary["results"].append(result)
-        
-        if result["passed"]:
-            summary["passed"] += 1
-        else:
-            summary["failed"] += 1
-    
-    print("\n" + "="*70)
-    print("SUMMARY")
-    print("="*70)
-    print(f"Total:  {summary['total']}")
-    print(f"Passed: {summary['passed']}")
-    print(f"Failed: {summary['failed']}")
-    print(f"Success Rate: {summary['passed']/summary['total']*100:.0f}%")
-    
-    return summary
+@pytest.mark.parametrize("test_case", TEST_CASES, ids=lambda tc: tc.name)
+def test_recommender_parsing(recommender, test_case: TestCase):
+    """Test that hardware parsing works correctly."""
+    hardware = parse_hardware_input(test_case.hardware_text)
+    assert hardware is not None, f"Failed to parse hardware: '{test_case.hardware_text}'"
+    assert hardware.gpu_name is not None
+    assert hardware.total_vram_gb > 0
+
+
+@pytest.mark.parametrize("test_case", TEST_CASES, ids=lambda tc: tc.name)
+def test_recommender_returns_results(recommender, test_case: TestCase):
+    """Test that recommender returns results."""
+    hardware = parse_hardware_input(test_case.hardware_text)
+    assert hardware is not None
+
+    recommendations = recommender.recommend(
+        hardware=hardware,
+        use_case_text=test_case.use_case,
+        user_query=test_case.user_query,
+        top_k=5,
+    )
+
+    assert len(recommendations) > 0, f"No recommendations returned for {test_case.name}"
+
+
+@pytest.mark.parametrize("test_case", TEST_CASES, ids=lambda tc: tc.name)
+def test_recommender_param_range(recommender, test_case: TestCase):
+    """Test that recommended models fall within expected parameter range."""
+    hardware = parse_hardware_input(test_case.hardware_text)
+    assert hardware is not None
+
+    recommendations = recommender.recommend(
+        hardware=hardware,
+        use_case_text=test_case.use_case,
+        user_query=test_case.user_query,
+        top_k=5,
+    )
+
+    assert len(recommendations) > 0
+
+    top_model = recommendations[0]
+    min_params, max_params = test_case.expected_params_range
+    assert min_params <= top_model.params_billions <= max_params, (
+        f"Top model param count {top_model.params_billions}B is outside "
+        f"expected range [{min_params}, {max_params}]B"
+    )
+
+
+@pytest.mark.parametrize("test_case", TEST_CASES, ids=lambda tc: tc.name)
+def test_recommender_coding_score(recommender, test_case: TestCase):
+    """Test that top model's coding score meets minimum threshold."""
+    hardware = parse_hardware_input(test_case.hardware_text)
+    assert hardware is not None
+
+    recommendations = recommender.recommend(
+        hardware=hardware,
+        use_case_text=test_case.use_case,
+        user_query=test_case.user_query,
+        top_k=5,
+    )
+
+    assert len(recommendations) > 0
+
+    top_model = recommendations[0]
+    assert top_model.coding >= test_case.expected_min_coding, (
+        f"Top model coding score {top_model.coding} is below "
+        f"expected minimum {test_case.expected_min_coding}"
+    )
+
+
+@pytest.mark.parametrize("test_case", TEST_CASES, ids=lambda tc: tc.name)
+def test_recommender_model_pattern(recommender, test_case: TestCase):
+    """Test that top model matches expected pattern (if specified)."""
+    if not test_case.expected_model_pattern:
+        pytest.skip("No expected model pattern specified")
+
+    hardware = parse_hardware_input(test_case.hardware_text)
+    assert hardware is not None
+
+    recommendations = recommender.recommend(
+        hardware=hardware,
+        use_case_text=test_case.use_case,
+        user_query=test_case.user_query,
+        top_k=5,
+    )
+
+    assert len(recommendations) > 0
+
+    top_model = recommendations[0]
+    assert test_case.expected_model_pattern.lower() in top_model.model_id.lower(), (
+        f"Top model {top_model.model_id} does not match "
+        f"expected pattern {test_case.expected_model_pattern}"
+    )
+
+
+@pytest.mark.parametrize("test_case", TEST_CASES, ids=lambda tc: tc.name)
+def test_recommender_all_scores_valid(recommender, test_case: TestCase):
+    """Test that all scoring fields are valid numbers."""
+    hardware = parse_hardware_input(test_case.hardware_text)
+    assert hardware is not None
+
+    recommendations = recommender.recommend(
+        hardware=hardware,
+        use_case_text=test_case.use_case,
+        user_query=test_case.user_query,
+        top_k=5,
+    )
+
+    assert len(recommendations) > 0
+
+    for model in recommendations:
+        assert 0 <= model.final_score <= 1, f"Invalid final_score: {model.final_score}"
+        assert 0 <= model.semantic_score <= 1, f"Invalid semantic_score: {model.semantic_score}"
+        assert 0 <= model.benchmark_score <= 1, f"Invalid benchmark_score: {model.benchmark_score}"
+        assert 0 <= model.hardware_score <= 1, f"Invalid hardware_score: {model.hardware_score}"
+
+
+@pytest.mark.parametrize("test_case", TEST_CASES, ids=lambda tc: tc.name)
+def test_recommender_has_huggingface_url(recommender, test_case: TestCase):
+    """Test that recommended models have HuggingFace repo IDs."""
+    hardware = parse_hardware_input(test_case.hardware_text)
+    assert hardware is not None
+
+    recommendations = recommender.recommend(
+        hardware=hardware,
+        use_case_text=test_case.use_case,
+        user_query=test_case.user_query,
+        top_k=5,
+    )
+
+    assert len(recommendations) > 0
+
+    for model in recommendations:
+        if model.hf_repo_id:
+            assert "huggingface.co" not in model.hf_repo_id
+
+
+def test_recommender_handles_empty_use_case():
+    """Test that recommender handles empty use case text."""
+    recommender = get_recommender()
+    hardware = parse_hardware_input("8 A100s")
+
+    recommendations = recommender.recommend(
+        hardware=hardware,
+        use_case_text="",
+        user_query="general chat",
+        top_k=5,
+    )
+
+    assert len(recommendations) > 0
+
+
+def test_recommender_model_count():
+    """Test that recommender reports correct model count."""
+    recommender = get_recommender()
+    assert recommender.model_count > 0
 
 
 if __name__ == "__main__":
-    run_all_tests(verbose=True)
+    pytest.main([__file__, "-v"])

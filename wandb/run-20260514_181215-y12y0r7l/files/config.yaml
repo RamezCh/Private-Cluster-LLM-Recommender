@@ -1,0 +1,45 @@
+_wandb:
+    value:
+        cli_version: 0.27.0
+        e:
+            g23opu91nkzg0y7ob4mhgbcvj507h2i3:
+                email: chreideramez@gmail.com
+                executable: C:\Python312\python.exe
+                git:
+                    commit: e2d620ec61331c0a6e32ef587c31fb9c0e5c0dff
+                    remote: https://github.com/RamezCh/Private-Cluster-LLM-Recommender.git
+                host: RamezCh
+                os: Windows-11-10.0.26200-SP0
+                program: <python with no main file>
+                python: CPython 3.12.6
+                root: C:\Users\ramiz\OneDrive\Desktop\BHT\BHT - Assignments\Semester 2\Data Science Workflow\OpenCode LLM Recommender
+                startedAt: "2026-05-14T16:12:15.567243Z"
+                writerId: g23opu91nkzg0y7ob4mhgbcvj507h2i3
+        m: []
+        python_version: 3.12.6
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 51
+                - 53
+                - 75
+            "2":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 51
+                - 53
+                - 75
+            "4": 3.12.6
+            "5": 0.27.0
+            "6": 5.6.1
+            "8":
+                - 3
+            "12": 0.27.0
+            "13": windows-amd64

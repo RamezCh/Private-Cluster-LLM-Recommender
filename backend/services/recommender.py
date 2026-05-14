@@ -1,19 +1,35 @@
+"""Hybrid LLM recommender engine. Simple, efficient, works."""
+
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from config.weights import (
-    USE_CASE_BENCHMARK_WEIGHTS,
-    SEMANTIC_WEIGHT,
-    BENCHMARK_WEIGHT,
-    HARDWARE_WEIGHT,
-    TOP_K_RECOMMENDATIONS,
+from backend.logging import get_logger
+from backend.services.parser import (
+    ParsedHardware, determine_quantization, calculate_benchmark_score,
+    calculate_hardware_score, detect_use_case
 )
-from .embedding_service import get_embedding_service, EmbeddingService
-from .hardware_parser import ParsedHardware
-from .wandb_logger import WandbLogger
+from backend.services.embedding_service import get_embedding_service
+from backend.services.wandb_logger import get_wandb_logger
+from config.config import (
+    DB_PATH, DEFAULT_USE_CASE, SEMANTIC_WEIGHT, BENCHMARK_WEIGHT, HARDWARE_WEIGHT,
+    TOP_K_RECOMMENDATIONS, GPU_CATALOG, USE_CASE_BENCHMARK_WEIGHTS,
+)
+
+logger = get_logger(__name__)
+
+
+def _determine_quant(model_vram: float, total_vram: float) -> str:
+    from config.config import VRAM_MULTIPLIERS as VM
+    if total_vram >= model_vram * VM["fp16"]:
+        return "FP16"
+    if total_vram >= model_vram * VM["int8"]:
+        return "INT8"
+    if total_vram >= model_vram * VM["int4"]:
+        return "INT4"
+    return "Insufficient"
 
 
 @dataclass
@@ -34,276 +50,230 @@ class ScoredModel:
     vram_int4: float
     hosting_strategy: str
     is_moe: bool
-    semantic_score: float
-    benchmark_score: float
-    hardware_score: float
-    final_score: float
-    matched_hardware: dict
+    semantic_score: float = 0.0
+    benchmark_score: float = 0.0
+    hardware_score: float = 0.0
+    final_score: float = 0.0
+    matched_hardware: dict = field(default_factory=dict)
 
-
-def calculate_benchmark_score(
-    coding: float,
-    math: float,
-    reasoning: float,
-    intelligence_index: float,
-    use_case: str
-) -> float:
-    weights = USE_CASE_BENCHMARK_WEIGHTS.get(
-        use_case,
-        USE_CASE_BENCHMARK_WEIGHTS["general"]
-    )
-    
-    score = (
-        weights["coding"] * (coding or 0) +
-        weights["math"] * (math or 0) +
-        weights["reasoning"] * (reasoning or 0) +
-        weights["intelligence_index"] * (intelligence_index or 0)
-    )
-    
-    return score / 100.0
-
-
-def calculate_hardware_score(
-    model_vram: float,
-    user_total_vram: float
-) -> float:
-    if user_total_vram >= model_vram:
-        return 1.0
-    
-    needed_for_int8 = model_vram * 0.5
-    needed_for_int4 = model_vram * 0.25
-    
-    if user_total_vram >= needed_for_int8:
-        return 0.8
-    elif user_total_vram >= needed_for_int4:
-        return 0.6
-    else:
-        return 0.0
+    def to_dict(self) -> dict:
+        return {
+            "model_id": self.model_id,
+            "hf_repo_id": self.hf_repo_id,
+            "base_model": self.base_model,
+            "params_billions": self.params_billions,
+            "model_type": self.model_type,
+            "architecture": self.architecture,
+            "benchmarks": {
+                "coding": round(self.coding, 2),
+                "math": round(self.math_score, 2),
+                "reasoning": round(self.reasoning, 2),
+                "intelligence_index": round(self.intelligence_index, 2),
+            },
+            "vram_fp16_gb": round(self.vram_fp16, 2),
+            "vram_int8_gb": round(self.vram_int8, 2),
+            "vram_int4_gb": round(self.vram_int4, 2),
+            "hosting_strategy": self.hosting_strategy,
+            "is_moe": self.is_moe,
+            "scores": {
+                "semantic": round(self.semantic_score, 3),
+                "benchmark": round(self.benchmark_score, 3),
+                "hardware": round(self.hardware_score, 3),
+                "final": round(self.final_score, 3),
+            },
+            "matched_hardware": self.matched_hardware,
+        }
 
 
 class LLMRecommender:
     def __init__(
         self,
         db_path: Optional[str] = None,
-        wandb_logger: Optional[WandbLogger] = None
+        semantic_weight: float = SEMANTIC_WEIGHT,
+        benchmark_weight: float = BENCHMARK_WEIGHT,
+        hardware_weight: float = HARDWARE_WEIGHT,
     ):
-        self.db_path = db_path or "data_gathering_pipeline/data/master_model_db.jsonl"
+        self.db_path = db_path or DB_PATH
         self.models: list[dict] = []
-        self.embedding_service: Optional[EmbeddingService] = None
-        self.wandb_logger = wandb_logger
-        
+        self.semantic_weight = semantic_weight
+        self.benchmark_weight = benchmark_weight
+        self.hardware_weight = hardware_weight
+        self._wandb = get_wandb_logger()
         self._load_models()
-    
+
     def _load_models(self) -> None:
         if not Path(self.db_path).exists():
-            raise FileNotFoundError(f"Model database not found: {self.db_path}")
-        
+            logger.warning(f"Model database not found: {self.db_path}")
+            return
         with open(self.db_path, "r", encoding="utf-8") as f:
             for line in f:
                 try:
                     self.models.append(json.loads(line))
                 except json.JSONDecodeError:
-                    continue
-    
-    def _init_embeddings(self) -> None:
-        if self.embedding_service is None:
-            self.embedding_service = get_embedding_service()
-    
-    def find_compatible_models(
-        self,
-        hardware: ParsedHardware
-    ) -> list[dict]:
-        compatible = []
-        total_vram = hardware.total_vram_gb
-        
-        for model in self.models:
-            vram_fp16 = model.get("vram_gb", {}).get("fp16", 0)
-            
-            if total_vram >= vram_fp16:
-                compatible.append((model, "FP16"))
-            elif total_vram >= vram_fp16 * 0.5:
-                compatible.append((model, "INT8"))
-            elif total_vram >= vram_fp16 * 0.25:
-                compatible.append((model, "INT4"))
-            else:
-                compatible.append((model, "Insufficient"))
-        
-        return [m for m, q in compatible if q != "Insufficient"]
-    
+                    pass
+        logger.info(f"Loaded {len(self.models)} models")
+
+    def _hw_info(self, model: dict, hw: ParsedHardware) -> dict:
+        total_vram = hw.total_vram_gb
+        vram_fp16 = model.get("vram_gb", {}).get("fp16", 0)
+        quant = _determine_quant(vram_fp16, total_vram)
+
+        if quant == "FP16":
+            return {
+                "status": "Compatible (FP16)",
+                "quantization": "FP16",
+                "parallelism": "Single-GPU" if hw.count == 1 else f"TP-{hw.count}",
+                "strategy": "TP-Sharded" if hw.count > 1 else "Single-GPU",
+                "score": 100,
+            }
+        if quant == "INT8":
+            return {
+                "status": "Compatible (INT8)",
+                "quantization": "INT8",
+                "parallelism": "Quantized",
+                "strategy": "Single-GPU" if hw.count == 1 else f"DP-{hw.count}",
+                "score": 80,
+            }
+        if quant == "INT4":
+            return {
+                "status": "Compatible (INT4)",
+                "quantization": "INT4",
+                "parallelism": "Quantized",
+                "strategy": "Single-GPU" if hw.count == 1 else f"DP-{hw.count}",
+                "score": 60,
+            }
+        return {"status": "Insufficient VRAM", "quantization": "N/A",
+                "parallelism": "N/A", "strategy": "N/A", "score": 0}
+
     def recommend(
         self,
         hardware: ParsedHardware,
         use_case_text: str,
         user_query: str,
-        top_k: int = TOP_K_RECOMMENDATIONS
+        top_k: int = TOP_K_RECOMMENDATIONS,
     ) -> list[ScoredModel]:
-        start_time = time.time()
-        
-        self._init_embeddings()
-        
-        compatible_models = self.find_compatible_models(hardware)
-        
-        if not compatible_models:
+        start = time.time()
+
+        if len(use_case_text) > 5000:
+            use_case_text = use_case_text[:5000]
+        if len(user_query) > 5000:
+            user_query = user_query[:5000]
+
+        use_case, _ = detect_use_case(use_case_text)
+        if not use_case or use_case == DEFAULT_USE_CASE:
+            if use_case_text.strip():
+                use_case = DEFAULT_USE_CASE
+
+        total_vram = hardware.total_vram_gb
+        compatible = [
+            m for m in self.models
+            if _determine_quant(m.get("vram_gb", {}).get("fp16", 0), total_vram) != "Insufficient"
+        ]
+
+        if not compatible:
+            logger.warning(f"No models fit {hardware.gpu_name} ({total_vram}GB)")
             return []
-        
-        use_case = self._detect_use_case_from_text(use_case_text)
-        
-        semantic_results = {}
-        if self.embedding_service and self.embedding_service.index is not None:
-            search_results = self.embedding_service.search(user_query, top_k=100)
-            semantic_results = {mid: score for mid, score in search_results}
-        
-        scored_models = []
-        
-        for model in compatible_models:
-            model_id = model.get("model_id", "")
-            
-            semantic_score = semantic_results.get(model_id, 0.5)
-            
-            benchmarks = model.get("benchmarks", {})
-            benchmark_score = calculate_benchmark_score(
-                coding=benchmarks.get("coding"),
-                math=benchmarks.get("math"),
-                reasoning=benchmarks.get("reasoning"),
-                intelligence_index=benchmarks.get("intelligence_index"),
-                use_case=use_case
-            )
-            
+
+        emb_svc = get_embedding_service()
+        sem_results = {}
+        if emb_svc.index is not None:
+            for mid, score in emb_svc.search(user_query, top_k=100):
+                sem_results[mid] = score
+
+        weights = USE_CASE_BENCHMARK_WEIGHTS.get(use_case, USE_CASE_BENCHMARK_WEIGHTS["general"])
+        scored = []
+
+        for model in compatible:
+            mid = model.get("model_id", "")
+            sem_score = sem_results.get(mid, 0.5)
+
+            bmarks = model.get("benchmarks", {})
+            c = bmarks.get("coding", 0) or 0
+            m = bmarks.get("math", 0) or 0
+            r = bmarks.get("reasoning", 0) or 0
+            ii = bmarks.get("intelligence_index", 0) or 0
+            bm_score = (
+                weights["coding"] * c + weights["math"] * m +
+                weights["reasoning"] * r + weights["intelligence_index"] * ii
+            ) / 100.0
+
             vram_fp16 = model.get("vram_gb", {}).get("fp16", 0)
-            hardware_score = calculate_hardware_score(
-                model_vram=vram_fp16,
-                user_total_vram=hardware.total_vram_gb
+            hw_score = calculate_hardware_score(vram_fp16, total_vram)
+
+            final = (
+                self.semantic_weight * sem_score +
+                self.benchmark_weight * bm_score +
+                self.hardware_weight * hw_score
             )
-            
-            final_score = (
-                SEMANTIC_WEIGHT * semantic_score +
-                BENCHMARK_WEIGHT * benchmark_score +
-                HARDWARE_WEIGHT * hardware_score
-            )
-            
-            matched_hardware = self._get_matched_hardware_info(model, hardware)
-            
-            scored_models.append(ScoredModel(
-                model_id=model_id,
+
+            scored.append(ScoredModel(
+                model_id=mid,
                 hf_repo_id=model.get("hf_repo_id"),
                 base_model=model.get("base_model"),
                 params_billions=model.get("params_billions") or 0,
                 model_type=model.get("model_type", "unknown"),
                 architecture=model.get("architecture"),
-                coding=benchmarks.get("coding") or 0,
-                math_score=benchmarks.get("math") or 0,
-                reasoning=benchmarks.get("reasoning") or 0,
-                intelligence_index=benchmarks.get("intelligence_index") or 0,
+                coding=c,
+                math_score=m,
+                reasoning=r,
+                intelligence_index=ii,
                 safetensors_size_gb=model.get("safetensors_size_gb") or 0,
                 vram_fp16=vram_fp16,
                 vram_int8=model.get("vram_gb", {}).get("int8", 0),
                 vram_int4=model.get("vram_gb", {}).get("int4", 0),
                 hosting_strategy=model.get("hosting_strategy", "unknown"),
                 is_moe=model.get("is_moe", False),
-                semantic_score=semantic_score,
-                benchmark_score=benchmark_score,
-                hardware_score=hardware_score,
-                final_score=final_score,
-                matched_hardware=matched_hardware
+                semantic_score=sem_score,
+                benchmark_score=bm_score,
+                hardware_score=hw_score,
+                final_score=final,
+                matched_hardware=self._hw_info(model, hardware),
             ))
-        
-        scored_models.sort(key=lambda x: x.final_score, reverse=True)
-        
-        if self.wandb_logger:
-            self.wandb_logger.log_recommendation(
-                query=user_query,
-                hardware=f"{hardware.count}x {hardware.gpu_name}",
-                use_case=use_case,
-                num_results=len(scored_models[:top_k]),
-                top_model=scored_models[0].model_id if scored_models else "N/A"
-            )
-        
-        latency_ms = (time.time() - start_time) * 1000
-        
-        return scored_models[:top_k]
-    
-    def _detect_use_case_from_text(self, text: str) -> str:
-        text_lower = text.lower()
-        
-        scores = {}
-        for use_case, keywords in {
-            "coding": ["code", "programming", "developer", "software", "debug", "python", "javascript"],
-            "math": ["math", "calculus", "equation", "physics", "calculate", "numerical"],
-            "reasoning": ["reason", "logic", "analyze", "solve", "think", "strategy"],
-        }.items():
-            scores[use_case] = sum(1 for kw in keywords if kw in text_lower)
-        
-        if max(scores.values()) > 0:
-            return max(scores, key=scores.get)
-        
-        return "general"
-    
-    def _get_matched_hardware_info(
-        self,
-        model: dict,
-        hardware: ParsedHardware
-    ) -> dict:
-        gpu_id = hardware.gpu_id
-        gpu_count = hardware.count
-        total_vram = hardware.total_vram_gb
-        
-        all_compat = model.get("all_gpu_compatibility", {})
-        by_tier = all_compat.get("by_tier", {})
-        
-        for tier_key in ["data_center", "professional", "consumer", "laptop"]:
-            tier_data = by_tier.get(tier_key, [])
-            for config in tier_data:
-                if hardware.gpu_name in config.get("gpu_name", ""):
-                    count = config.get("count", 0)
-                    if count == gpu_count:
-                        return {
-                            "status": "Compatible",
-                            "quantization": config.get("quantization", "Unknown"),
-                            "parallelism": config.get("parallelism", "Unknown"),
-                            "strategy": config.get("strategy", "Unknown"),
-                            "score": config.get("score", 0)
-                        }
-        
-        vram_fp16 = model.get("vram_gb", {}).get("fp16", 0)
-        if total_vram >= vram_fp16:
-            return {
-                "status": "Compatible (FP16)",
-                "quantization": "FP16",
-                "parallelism": "Single-GPU" if gpu_count == 1 else f"TP-{gpu_count}",
-                "strategy": "TP-Sharded" if gpu_count > 1 else "Single-GPU",
-                "score": 100
-            }
-        elif total_vram >= vram_fp16 * 0.5:
-            return {
-                "status": "Compatible (INT8)",
-                "quantization": "INT8",
-                "parallelism": "Quantized",
-                "strategy": "Single-GPU" if gpu_count == 1 else f"DP-{gpu_count}",
-                "score": 80
-            }
-        elif total_vram >= vram_fp16 * 0.25:
-            return {
-                "status": "Compatible (INT4)",
-                "quantization": "INT4",
-                "parallelism": "Quantized",
-                "strategy": "Single-GPU" if gpu_count == 1 else f"DP-{gpu_count}",
-                "score": 60
-            }
-        
-        return {
-            "status": "Insufficient VRAM",
-            "quantization": "N/A",
-            "parallelism": "N/A",
-            "strategy": "N/A",
-            "score": 0
-        }
+
+        scored.sort(key=lambda x: x.final_score, reverse=True)
+
+        latency_ms = (time.time() - start) * 1000
+        try:
+            if self._wandb.enabled:
+                top = scored[0] if scored else None
+                self._wandb.log_recommendation(
+                    query=user_query[:1000],
+                    hardware=f"{hardware.count}x {hardware.gpu_name}",
+                    use_case=use_case,
+                    num_compatible=len(compatible),
+                    num_returned=len(scored[:top_k]),
+                    top_model=top.model_id if top else "N/A",
+                    top_model_score=top.final_score if top else 0.0,
+                    latency_ms=latency_ms,
+                )
+        except Exception as e:
+            logger.warning(f"W&B logging failed: {e}")
+
+        logger.info(f"Done in {latency_ms:.1f}ms, {len(scored[:top_k])} returned")
+        return scored[:top_k]
+
+    @property
+    def model_count(self) -> int:
+        return len(self.models)
 
 
 _recommender: Optional[LLMRecommender] = None
+_recommender_lock = None
 
 
 def get_recommender() -> LLMRecommender:
     global _recommender
     if _recommender is None:
-        _recommender = LLMRecommender()
+        global _recommender_lock
+        if _recommender_lock is None:
+            import threading
+            _recommender_lock = threading.Lock()
+        with _recommender_lock:
+            if _recommender is None:
+                _recommender = LLMRecommender()
     return _recommender
+
+
+def reset_recommender() -> None:
+    global _recommender
+    _recommender = None

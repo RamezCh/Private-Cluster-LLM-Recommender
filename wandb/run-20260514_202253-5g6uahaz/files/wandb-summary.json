@@ -1,0 +1,1 @@
+{"hardware":"2x A100 80GB","latency_ms":4670.808792114258,"num_compatible":1815,"num_returned":5,"top_model_score":0.694531703636394,"_timestamp":1.7787829797483368e+09,"_wandb":{"runtime":39},"query":"AI Coding Assistant that is intelligent and can debug","top_model":"maldv/Awqward2.5-32B-Instruct","_step":0,"_runtime":6.3965536,"use_case":"coding"}

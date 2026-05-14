@@ -1,0 +1,1 @@
+{"_timestamp":1.7787820808801105e+09,"num_compatible":1815,"_step":26,"_wandb":{"runtime":4},"top_model":"rombodawg/Rombos-LLM-V2.5-Qwen-72b","use_case":"general","latency_ms":56.11896514892578,"_runtime":4,"hardware":"8x A100 80GB","top_model_score":0.6578914306426871,"query":"general chat","num_returned":5}

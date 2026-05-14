@@ -1,0 +1,1 @@
+{"top_model_score":0.6578914306426871,"latency_ms":73.43697547912598,"_wandb":{"runtime":5},"use_case":"general","num_compatible":1815,"query":"general chat","hardware":"8x A100 80GB","_timestamp":1.7787814050136552e+09,"top_model":"rombodawg/Rombos-LLM-V2.5-Qwen-72b","_runtime":5,"_step":26,"num_returned":5}

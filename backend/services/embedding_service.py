@@ -1,5 +1,15 @@
-import json
+"""FAISS embedding service with simple module-level singleton."""
+
 import os
+
+from backend.logging import get_logger
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TQDM_DISABLE"] = "1"
+
+import json
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -7,151 +17,142 @@ import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+from transformers.utils import logging as tf_logging
+tf_logging.disable_progress_bar()
+
+logger = get_logger(__name__)
+
+_instance: Optional["EmbeddingService"] = None
+_instance_lock: Optional[object] = None
+
 
 class EmbeddingService:
-    def __init__(
-        self,
-        model_name: str = "all-MiniLM-L6-v2",
-        index_path: Optional[str] = None,
-        data_path: Optional[str] = None
-    ):
-        self.model_name = model_name
-        self.model = SentenceTransformer(model_name)
-        self.dimension = 384
-        
-        self.index_path = index_path or "embeddings/faiss_index.bin"
-        self.data_path = data_path or "embeddings/model_data.json"
-        
+    MODEL_NAME = "all-MiniLM-L6-v2"
+    DIM = 384
+
+    def __init__(self) -> None:
+        self.model = SentenceTransformer(self.MODEL_NAME)
+        from config.config import EMBEDDING_INDEX_PATH, EMBEDDING_DATA_PATH
+        self.index_path = EMBEDDING_INDEX_PATH
+        self.data_path = EMBEDDING_DATA_PATH
+        self._temp_dir = tempfile.mkdtemp(prefix="llm_rec_faiss_")
+        self._local_index = os.path.join(self._temp_dir, "faiss_index.bin")
+        self._local_data = os.path.join(self._temp_dir, "model_data.json")
         self.index: Optional[faiss.IndexFlatIP] = None
         self.model_ids: list[str] = []
         self.model_texts: list[str] = []
-        
-    def create_text_representation(
-        self,
-        model_id: str,
-        base_model: Optional[str],
-        model_type: str,
-        architecture: Optional[str]
-    ) -> str:
+        self._emb_cache: Optional[np.ndarray] = None
+
+    def __del__(self) -> None:
+        self._cleanup()
+
+    def _cleanup(self) -> None:
+        try:
+            if os.path.exists(self._temp_dir):
+                shutil.rmtree(self._temp_dir)
+        except Exception as e:
+            logger.warning(f"Failed to clean up temp dir: {e}")
+
+    def _text_repr(self, model_id: str, base_model: Optional[str], model_type: str,
+                   architecture: Optional[str]) -> str:
         parts = [
-            model_id.split("/")[-1] if "/" in model_id else model_id,
-            base_model.split("/")[-1] if base_model and "/" in base_model else (base_model or ""),
+            (model_id.split("/")[-1] if "/" in model_id else model_id),
+            (base_model.split("/")[-1] if base_model and "/" in base_model else (base_model or "")),
             model_type,
-            architecture or ""
+            architecture or "",
         ]
         return " | ".join([p for p in parts if p])
-    
-    def load_or_build_index(
-        self,
-        db_path: str = "data_gathering_pipeline/data/master_model_db.jsonl"
-    ) -> None:
+
+    def load_or_build(self, db_path: Optional[str] = None) -> None:
         if os.path.exists(self.index_path) and os.path.exists(self.data_path):
-            self.load_index()
+            self._load()
         else:
-            self.build_index(db_path)
-    
-    def build_index(self, db_path: str) -> None:
+            db_path = db_path or os.environ.get(
+                "DB_PATH",
+                "data_gathering_pipeline/data/master_model_db.jsonl"
+            )
+            self._build(db_path)
+
+    def _build(self, db_path: str) -> None:
         Path(self.index_path).parent.mkdir(parents=True, exist_ok=True)
-        
         records = []
         with open(db_path, "r", encoding="utf-8") as f:
             for line in f:
                 try:
                     records.append(json.loads(line))
                 except json.JSONDecodeError:
-                    continue
-        
+                    pass
+
         self.model_ids = []
         self.model_texts = []
-        
-        for record in records:
-            model_id = record.get("model_id", "")
-            self.model_ids.append(model_id)
-            
-            text = self.create_text_representation(
-                model_id=model_id,
-                base_model=record.get("base_model"),
-                model_type=record.get("model_type", ""),
-                architecture=record.get("architecture")
-            )
-            self.model_texts.append(text)
-        
+        for rec in records:
+            mid = rec.get("model_id", "")
+            self.model_ids.append(mid)
+            self.model_texts.append(self._text_repr(
+                mid, rec.get("base_model"), rec.get("model_type", ""), rec.get("architecture")
+            ))
+
+        logger.info(f"Encoding {len(self.model_texts)} model texts...")
         embeddings = self.model.encode(
-            self.model_texts,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=True
-        )
-        
-        self.index = faiss.IndexFlatIP(self.dimension)
-        self.index.add(embeddings.astype(np.float32))
-        
-        self.save_index()
-    
-    def save_index(self) -> None:
+            self.model_texts, convert_to_numpy=True,
+            normalize_embeddings=True, show_progress_bar=False
+        ).astype(np.float32)
+        self.index = faiss.IndexFlatIP(self.DIM)
+        self.index.add(embeddings)
+        self._emb_cache = embeddings
+        self._save()
+
+    def _save(self) -> None:
         if self.index is not None:
-            faiss.write_index(self.index, self.index_path)
-        
-        with open(self.data_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "model_ids": self.model_ids,
-                "model_texts": self.model_texts
-            }, f, ensure_ascii=False)
-    
-    def load_index(self) -> None:
-        self.index = faiss.read_index(self.index_path)
-        
-        with open(self.data_path, "r", encoding="utf-8") as f:
+            faiss.write_index(self.index, self._local_index)
+            shutil.copy2(self._local_index, self.index_path)
+        with open(self._local_data, "w", encoding="utf-8") as f:
+            json.dump({"model_ids": self.model_ids, "model_texts": self.model_texts}, f)
+        shutil.copy2(self._local_data, self.data_path)
+
+    def _load(self) -> None:
+        shutil.copy2(self.index_path, self._local_index)
+        self.index = faiss.read_index(self._local_index)
+        shutil.copy2(self.data_path, self._local_data)
+        with open(self._local_data, "r", encoding="utf-8") as f:
             data = json.load(f)
             self.model_ids = data["model_ids"]
             self.model_texts = data["model_texts"]
-    
-    def search(
-        self,
-        query: str,
-        top_k: int = 10
-    ) -> list[tuple[str, float]]:
+        logger.info(f"Loaded index with {self.index.ntotal} vectors")
+
+    def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
         if self.index is None:
             return []
-        
-        query_embedding = self.model.encode(
-            [query],
-            convert_to_numpy=True,
-            normalize_embeddings=True
+        query = query[:2000] if query else ""
+        q_emb = self.model.encode(
+            [query], convert_to_numpy=True,
+            normalize_embeddings=True, show_progress_bar=False
         ).astype(np.float32)
-        
-        distances, indices = self.index.search(query_embedding, top_k)
-        
+        dists, idxs = self.index.search(q_emb, top_k)
         results = []
-        for dist, idx in zip(distances[0], indices[0]):
-            if idx < len(self.model_ids):
-                results.append((self.model_ids[idx], float(dist)))
-        
+        for d, i in zip(dists[0], idxs[0]):
+            if 0 <= i < len(self.model_ids):
+                results.append((self.model_ids[int(i)], float(d)))
         return results
-    
-    def get_similarity_score(self, model_id: str, query: str) -> float:
-        if model_id not in self.model_ids:
-            return 0.0
-        
-        idx = self.model_ids.index(model_id)
-        text = self.model_texts[idx]
-        
-        embeddings = self.model.encode(
-            [query, text],
-            convert_to_numpy=True,
-            normalize_embeddings=True
-        )
-        
-        similarity = np.dot(embeddings[0], embeddings[1])
-        return float(similarity)
-
-
-_embedding_service: Optional[EmbeddingService] = None
 
 
 def get_embedding_service() -> EmbeddingService:
-    global _embedding_service
-    if _embedding_service is None:
-        _embedding_service = EmbeddingService()
-        _embedding_service.load_or_build_index()
-    return _embedding_service
+    global _instance
+    if _instance is None:
+        import threading
+        global _instance_lock
+        if _instance_lock is None:
+            _instance_lock = threading.Lock()
+        with _instance_lock:
+            if _instance is None:
+                svc = EmbeddingService()
+                svc.load_or_build()
+                _instance = svc
+    return _instance
+
+
+def reset_embedding_service() -> None:
+    global _instance
+    if _instance is not None:
+        _instance._cleanup()
+    _instance = None

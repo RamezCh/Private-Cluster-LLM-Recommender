@@ -1,0 +1,1 @@
+{"_wandb":{"runtime":8},"_runtime":8,"query":"python code generation","_timestamp":1.7787771711496198e+09,"num_compatible":1812,"hardware":"1x A100 80GB","top_model":"maldv/Awqward2.5-32B-Instruct","num_returned":3,"_step":0,"use_case":"coding","top_model_score":0.694531703636394,"latency_ms":7033.076524734497}

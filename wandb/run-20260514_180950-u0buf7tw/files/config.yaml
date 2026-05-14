@@ -1,0 +1,62 @@
+_wandb:
+    value:
+        cli_version: 0.27.0
+        e:
+            d2vh5cwnw8o45cu4176wscrjf83xpvuy:
+                cpu_count: 6
+                cpu_count_logical: 12
+                cudaVersion: "13.2"
+                disk:
+                    /:
+                        total: "994784382976"
+                        used: "673721630720"
+                email: chreideramez@gmail.com
+                executable: C:\Python312\python.exe
+                git:
+                    commit: e2d620ec61331c0a6e32ef587c31fb9c0e5c0dff
+                    remote: https://github.com/RamezCh/Private-Cluster-LLM-Recommender.git
+                gpu: NVIDIA GeForce RTX 4050 Laptop GPU
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ada
+                      cudaCores: 2560
+                      memoryTotal: "6439305216"
+                      name: NVIDIA GeForce RTX 4050 Laptop GPU
+                      uuid: GPU-85e7902f-9d2b-f922-0a03-ec0a0c70ab11
+                host: RamezCh
+                memory:
+                    total: "16369414144"
+                os: Windows-11-10.0.26200-SP0
+                program: <python with no main file>
+                python: CPython 3.12.6
+                root: C:\Users\ramiz\OneDrive\Desktop\BHT\BHT - Assignments\Semester 2\Data Science Workflow\OpenCode LLM Recommender
+                startedAt: "2026-05-14T16:09:50.184240Z"
+                writerId: d2vh5cwnw8o45cu4176wscrjf83xpvuy
+        m: []
+        python_version: 3.12.6
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 51
+                - 53
+                - 75
+            "2":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 51
+                - 53
+                - 75
+            "4": 3.12.6
+            "5": 0.27.0
+            "6": 5.6.1
+            "8":
+                - 3
+            "12": 0.27.0
+            "13": windows-amd64

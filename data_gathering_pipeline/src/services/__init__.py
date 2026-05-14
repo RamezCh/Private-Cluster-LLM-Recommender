@@ -20,6 +20,7 @@ from src.services.hardware import (
     estimate_size_from_params,
     get_recommended_context_tier,
 )
+from src.gpu_catalog import get_gpu_config, get_total_vram
 
 __all__ = [
     "HFMetadataService",
@@ -40,4 +41,6 @@ __all__ = [
     "parse_model_size",
     "estimate_size_from_params",
     "get_recommended_context_tier",
+    "get_gpu_config",
+    "get_total_vram",
 ]

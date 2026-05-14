@@ -1,0 +1,1 @@
+{"_runtime":10,"use_case":"coding","_wandb":{"runtime":10},"num_results":5,"query":"coding 8 A100s","top_model":"meta-llama/Llama-3.3-70B-Instruct","_timestamp":1.7787745059416795e+09,"_step":9,"hardware":"8x A100 80GB"}

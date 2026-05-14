@@ -1,0 +1,1 @@
+{"_runtime":8,"_timestamp":1.7787750025071697e+09,"hardware":"8x A100 80GB","query":"code generation python","num_results":3,"top_model":"meta-llama/Llama-3.3-70B-Instruct","_step":0,"use_case":"coding","_wandb":{"runtime":8}}
