@@ -1,10 +1,11 @@
 const API_BASE = '';
 
 class Carousel {
-    constructor(container, counterId) {
-        this.container = container;
-        this.track = container.querySelector('.carousel-track');
-        this.dotsContainer = container.querySelector('.carousel-dots');
+    constructor(containerId, counterId) {
+        this.container = document.getElementById(containerId);
+        this.wrapper = this.container.querySelector('.carousel-wrapper');
+        this.track = this.container.querySelector('.carousel-track');
+        this.dotsContainer = this.container.parentElement.querySelector('.carousel-dots');
         this.counterElement = document.getElementById(counterId);
         this.currentIndex = 0;
         this.cards = [];
@@ -89,23 +90,15 @@ class Carousel {
     updateCarousel() {
         if (this.cards.length === 0) return;
         
-        const activeCard = this.cards[this.currentIndex];
-        if (!activeCard) return;
+        const containerWidth = this.wrapper.offsetWidth || 800;
+        const cardWidth = 260;
+        const activeWidth = 320;
+        const gap = 16;
         
-        const containerWidth = this.container.offsetWidth;
-        const activeWidth = activeCard.offsetWidth || 320;
-        const gap = 20;
-        
-        const activeOffset = activeWidth + gap;
         const centerOffset = (containerWidth - activeWidth) / 2;
+        const scrollToIndex = this.currentIndex * (cardWidth + gap);
+        const offset = centerOffset - scrollToIndex;
         
-        let totalOffset = 0;
-        for (let i = 0; i < this.currentIndex; i++) {
-            totalOffset += (this.cards[i]?.offsetWidth || 260) + gap;
-        }
-        totalOffset += (activeCard.offsetWidth || 320) / 2;
-        
-        const offset = centerOffset - totalOffset;
         this.track.style.transform = `translateX(${offset}px)`;
 
         this.cards.forEach((card, i) => {
@@ -251,7 +244,7 @@ async function fetchShowcase() {
         
         if (data.success && data.showcase?.length > 0) {
             track.innerHTML = data.showcase.map(item => createCardHTML(item)).join('');
-            showcaseCarousel = new Carousel(document.getElementById('showcase-carousel'), 'showcase-counter');
+            showcaseCarousel = new Carousel('showcase-carousel', 'showcase-counter');
             showcaseCarousel.init();
             attachCardListeners();
         } else {
@@ -275,19 +268,15 @@ async function fetchRecommendations() {
     const gpuSelect = document.getElementById('gpu-select');
     const gpuCount = document.getElementById('gpu-count');
     const topKSelect = document.getElementById('top-k-select');
-    const useCase = document.getElementById('use-case-input').value.trim();
+    const useCase = getSelectedUseCases();
     
     const selectedOption = gpuSelect.options[gpuSelect.selectedIndex];
     const gpuName = selectedOption?.text || '';
     const count = parseInt(gpuCount?.value) || 1;
     const topK = parseInt(topKSelect?.value) || 5;
     
-    if (!gpuName || gpuName === 'Select a GPU...') {
+    if (!gpuName || gpuName === '-- SELECT GPU --') {
         showToast('Please select a GPU type');
-        return;
-    }
-    if (!useCase) {
-        showToast('Please describe your use case');
         return;
     }
     
@@ -305,7 +294,7 @@ async function fetchRecommendations() {
     showcaseSection.classList.add('hidden');
     resultsSection.classList.remove('hidden');
 
-    resultsCarousel = new Carousel(document.getElementById('results-carousel'), 'results-counter');
+    resultsCarousel = new Carousel('results-carousel', 'results-counter');
     resultsCarousel.init();
 
     try {
@@ -319,7 +308,7 @@ async function fetchRecommendations() {
         
         if (data.success && data.recommendations?.length > 0) {
             track.innerHTML = data.recommendations.map(item => createCardHTML(item)).join('');
-            resultsCarousel = new Carousel(document.getElementById('results-carousel'), 'results-counter');
+            resultsCarousel = new Carousel('results-carousel', 'results-counter');
             resultsCarousel.init();
             attachCardListeners();
             
@@ -358,13 +347,32 @@ function updateGPUInfo() {
     if (tierEl) tierEl.textContent = tier.charAt(0).toUpperCase() + tier.slice(1);
 }
 
-function handleChipClick(chip) {
-    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-    chip.classList.add('active');
-    const value = chip.dataset.value;
-    if (value) {
-        document.getElementById('use-case-input').value = value;
+function handleChipClick(chipElement) {
+    const textarea = document.getElementById('use-case-input');
+    const hasCustomText = textarea.dataset.hasCustomText === 'true';
+    
+    chipElement.classList.toggle('active');
+    
+    const selectedValues = Array.from(document.querySelectorAll('#use-case-chips .chip.active')).map(c => c.dataset.value);
+    
+    if (selectedValues.length > 0) {
+        textarea.value = selectedValues.join(' + ');
+        textarea.dataset.hasCustomText = 'false';
+    } else if (!hasCustomText) {
+        textarea.value = '';
     }
+}
+
+function getSelectedUseCases() {
+    const textarea = document.getElementById('use-case-input');
+    const activeChips = document.querySelectorAll('#use-case-chips .chip.active');
+    const selectedValues = Array.from(activeChips).map(c => c.dataset.value);
+    
+    if (selectedValues.length > 0) {
+        return selectedValues.join(' + ');
+    }
+    
+    return textarea.value.trim() || 'general';
 }
 
 function handleBackToShowcase() {
@@ -390,16 +398,34 @@ document.addEventListener('DOMContentLoaded', () => {
         recommendBtn.addEventListener('click', fetchRecommendations);
     }
 
-    document.querySelectorAll('.chip').forEach(chip => {
-        chip.addEventListener('click', () => handleChipClick(chip));
-    });
+    const chipsContainer = document.getElementById('use-case-chips');
+    if (chipsContainer) {
+        chipsContainer.addEventListener('click', (e) => {
+            const chip = e.target.closest('.chip');
+            if (chip) {
+                handleChipClick(chip);
+            }
+        });
+    }
+
+    const useCaseInput = document.getElementById('use-case-input');
+    if (useCaseInput) {
+        useCaseInput.addEventListener('input', function() {
+            const activeChips = document.querySelectorAll('#use-case-chips .chip.active');
+            if (activeChips.length > 0) {
+                this.dataset.hasCustomText = 'false';
+            } else {
+                this.dataset.hasCustomText = this.value.trim() ? 'true' : 'false';
+            }
+        });
+    }
 
     const backBtn = document.getElementById('back-btn');
     if (backBtn) {
         backBtn.addEventListener('click', handleBackToShowcase);
     }
 
-    showcaseCarousel = new Carousel(document.getElementById('showcase-carousel'), 'showcase-counter');
+    showcaseCarousel = new Carousel('showcase-carousel', 'showcase-counter');
     showcaseCarousel.init();
     
     fetchShowcase();
