@@ -89,17 +89,6 @@ class Carousel {
 
     updateCarousel() {
         if (this.cards.length === 0) return;
-        
-        const containerWidth = this.wrapper.offsetWidth || 800;
-        const cardWidth = 260;
-        const activeWidth = 320;
-        const gap = 16;
-        
-        const centerOffset = (containerWidth - activeWidth) / 2;
-        const scrollToIndex = this.currentIndex * (cardWidth + gap);
-        const offset = centerOffset - scrollToIndex;
-        
-        this.track.style.transform = `translateX(${offset}px)`;
 
         this.cards.forEach((card, i) => {
             card.classList.toggle('active', i === this.currentIndex);
@@ -110,7 +99,26 @@ class Carousel {
             dot.classList.toggle('active', i === this.currentIndex);
         });
 
+        this.scrollActiveIntoView();
         this.updateCounter();
+    }
+
+    scrollActiveIntoView() {
+        const activeCard = this.cards[this.currentIndex];
+        if (activeCard && this.wrapper) {
+            requestAnimationFrame(() => {
+                const wrapperRect = this.wrapper.getBoundingClientRect();
+                const cardRect = activeCard.getBoundingClientRect();
+                const centerOffset = cardRect.left - wrapperRect.left - (wrapperRect.width - cardRect.width) / 2;
+                const currentScroll = this.wrapper.scrollLeft;
+                const targetScroll = currentScroll + centerOffset;
+                
+                this.wrapper.scrollTo({
+                    left: targetScroll,
+                    behavior: 'smooth'
+                });
+            });
+        }
     }
 
     updateCounter() {
@@ -126,7 +134,7 @@ class Carousel {
         this.updateCards();
         this.createDots();
         this.currentIndex = 0;
-        setTimeout(() => this.updateCarousel(), 50);
+        this.updateCarousel();
     }
 }
 
@@ -432,6 +440,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 window.addEventListener('resize', () => {
-    showcaseCarousel?.updateCarousel();
-    resultsCarousel?.updateCarousel();
+    showcaseCarousel?.scrollActiveIntoView();
+    resultsCarousel?.scrollActiveIntoView();
 });
