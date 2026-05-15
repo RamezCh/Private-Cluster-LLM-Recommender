@@ -101,3 +101,6 @@ wandb/
 
 # Model cache
 model_cache/
+
+# Handoff documents
+handoffs/

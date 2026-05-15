@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from backend.logging import get_logger
+from backend.logger import get_logger
 
 logger = get_logger(__name__)
 

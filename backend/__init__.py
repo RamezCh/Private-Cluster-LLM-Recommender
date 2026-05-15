@@ -15,6 +15,6 @@ if _env_file.exists():
 else:
     load_dotenv()
 
-from backend.logging import setup_logging, get_logger  # noqa: E402
+from backend.logger import setup_logging, get_logger  # noqa: E402
 
 __all__ = ["setup_logging", "get_logger"]

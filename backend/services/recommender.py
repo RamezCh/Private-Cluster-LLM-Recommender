@@ -6,10 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from backend.logging import get_logger
+from backend.logger import get_logger
 from backend.services.parser import (
     ParsedHardware, determine_quantization, calculate_benchmark_score,
-    calculate_hardware_score, detect_use_case
+    calculate_hardware_score, detect_use_case, parse_hardware_input
 )
 from backend.services.embedding_service import get_embedding_service
 from backend.services.wandb_logger import get_wandb_logger
@@ -255,6 +255,57 @@ class LLMRecommender:
     @property
     def model_count(self) -> int:
         return len(self.models)
+
+    def get_showcase_picks(self) -> list[dict]:
+        """Get top model per hardware tier for showcase display."""
+        showcase_configs = [
+            {
+                "category": "laptop",
+                "label": "Works on your laptop",
+                "hardware_text": "MacBook Pro M3 Max",
+            },
+            {
+                "category": "consumer",
+                "label": "Budget workstation",
+                "hardware_text": "2x RTX 4090",
+            },
+            {
+                "category": "data_center",
+                "label": "Data center powerhouse",
+                "hardware_text": "2x A100 40GB",
+            },
+        ]
+
+        picks = []
+        for cfg in showcase_configs:
+            hw = parse_hardware_input(cfg["hardware_text"])
+            if hw is None:
+                continue
+
+            results = self.recommend(
+                hardware=hw,
+                use_case_text="general purpose assistant",
+                user_query="best general purpose open weight LLM",
+                top_k=1,
+            )
+
+            if results:
+                model_dict = results[0].to_dict()
+                picks.append({
+                    "category": cfg["category"],
+                    "label": cfg["label"],
+                    "hardware": {
+                        "gpu_id": hw.gpu_id,
+                        "gpu_name": hw.gpu_name,
+                        "vram_gb": hw.vram_gb,
+                        "count": hw.count,
+                        "total_vram_gb": hw.total_vram_gb,
+                        "tier": hw.tier,
+                    },
+                    "model": model_dict,
+                })
+
+        return picks
 
 
 _recommender: Optional[LLMRecommender] = None

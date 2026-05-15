@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Recommender</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>LLM RECOMMENDER</h1>
+            <p class="subtitle">Select your hardware. Get the perfect model.</p>
+        </header>
+
+        <section class="selector-section">
+            <h2>HARDWARE CONFIG</h2>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>GPU TYPE</label>
+                    <select id="gpu-select">
+                        <option value="">-- SELECT GPU --</option>
+                        <optgroup label="DATA CENTER">
+                            <option value="a100_80gb" data-vram="80" data-tier="data_center">NVIDIA A100 80GB</option>
+                            <option value="a100_40gb" data-vram="40" data-tier="data_center">NVIDIA A100 40GB</option>
+                            <option value="h100_80gb" data-vram="80" data-tier="data_center">NVIDIA H100 80GB</option>
+                            <option value="h100_sxm5_80gb" data-vram="80" data-tier="data_center">NVIDIA H100 SXM5 80GB</option>
+                            <option value="h200_141gb" data-vram="141" data-tier="data_center">NVIDIA H200 141GB</option>
+                            <option value="b200_192gb" data-vram="192" data-tier="data_center">NVIDIA B200 192GB</option>
+                            <option value="b100_192gb" data-vram="192" data-tier="data_center">NVIDIA B100 192GB</option>
+                            <option value="v100_32gb" data-vram="32" data-tier="data_center">NVIDIA V100 32GB</option>
+                            <option value="v100_16gb" data-vram="16" data-tier="data_center">NVIDIA V100 16GB</option>
+                            <option value="p100_16gb" data-vram="16" data-tier="data_center">NVIDIA P100 16GB</option>
+                            <option value="mi300x_192gb" data-vram="192" data-tier="data_center">AMD MI300X 192GB</option>
+                            <option value="mi250_128gb" data-vram="128" data-tier="data_center">AMD MI250X 128GB</option>
+                        </optgroup>
+                        <optgroup label="PROFESSIONAL">
+                            <option value="a6000_48gb" data-vram="48" data-tier="professional">NVIDIA RTX A6000 48GB</option>
+                            <option value="a5000_24gb" data-vram="24" data-tier="professional">NVIDIA RTX A5000 24GB</option>
+                            <option value="a4000_16gb" data-vram="16" data-tier="professional">NVIDIA RTX A4000 16GB</option>
+                        </optgroup>
+                        <optgroup label="CONSUMER">
+                            <option value="rtx_4090" data-vram="24" data-tier="consumer">NVIDIA RTX 4090 24GB</option>
+                            <option value="rtx_3090" data-vram="24" data-tier="consumer">NVIDIA RTX 3090 24GB</option>
+                            <option value="rtx_3090_ti" data-vram="24" data-tier="consumer">NVIDIA RTX 3090 Ti 24GB</option>
+                            <option value="rtx_4080" data-vram="16" data-tier="consumer">NVIDIA RTX 4080 16GB</option>
+                            <option value="rtx_4080_s" data-vram="16" data-tier="consumer">NVIDIA RTX 4080 Super 16GB</option>
+                            <option value="rtx_4070" data-vram="12" data-tier="consumer">NVIDIA RTX 4070 12GB</option>
+                            <option value="rtx_4070_ti" data-vram="16" data-tier="consumer">NVIDIA RTX 4070 Ti Super 16GB</option>
+                        </optgroup>
+                        <optgroup label="LAPTOP / MAC">
+                            <option value="macbook_pro_m3_max" data-vram="128" data-tier="laptop">MacBook Pro M3 Max 128GB</option>
+                            <option value="macbook_pro_m2_max" data-vram="96" data-tier="laptop">MacBook Pro M2 Max 96GB</option>
+                            <option value="macbook_pro_m3_pro" data-vram="36" data-tier="laptop">MacBook Pro M3 Pro 36GB</option>
+                            <option value="macbook_pro_m2_pro" data-vram="36" data-tier="laptop">MacBook Pro M2 Pro 36GB</option>
+                            <option value="macbook_pro_m3" data-vram="24" data-tier="laptop">MacBook Pro M3 24GB</option>
+                            <option value="laptop_rtx_4080" data-vram="12" data-tier="laptop">Laptop RTX 4080 12GB</option>
+                            <option value="laptop_rtx_4070" data-vram="8" data-tier="laptop">Laptop RTX 4070 8GB</option>
+                            <option value="laptop_rtx_4060" data-vram="8" data-tier="laptop">Laptop RTX 4060 8GB</option>
+                            <option value="laptop_3090" data-vram="16" data-tier="laptop">Laptop RTX 3090 16GB</option>
+                            <option value="laptop_integrated" data-vram="4" data-tier="laptop">Integrated GPU 4GB</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>NUM GPUS</label>
+                    <input type="number" id="gpu-count" value="1" min="1" max="16">
+                </div>
+                <div class="form-group">
+                    <label>TOTAL VRAM</label>
+                    <div class="info-box" id="gpu-vram-info">0 GB</div>
+                </div>
+                <div class="form-group">
+                    <label>TIER</label>
+                    <div class="info-box" id="gpu-tier-info">---</div>
+                </div>
+                <div class="form-group">
+                    <label>TOP RESULTS</label>
+                    <select id="top-k-select">
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5" selected>5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group" style="margin-top: 1.5rem;">
+                <label>USE CASE</label>
+                <div class="chips">
+                    <button class="chip" data-value="code generation">CODING</button>
+                    <button class="chip" data-value="math reasoning">MATH</button>
+                    <button class="chip" data-value="reasoning">REASONING</button>
+                    <button class="chip active" data-value="general">GENERAL</button>
+                </div>
+                <textarea id="use-case-input" placeholder="Describe your task..." rows="4" style="margin-top: 1rem;"></textarea>
+            </div>
+            <button id="recommend-btn" class="btn-primary">RECOMMENDER START!</button>
+        </section>
+
+        <section class="carousel-section" id="showcase-section">
+            <h2>SHOWCASE</h2>
+            <p class="section-subtitle">Top models by tier</p>
+            <div class="carousel-wrapper" id="showcase-carousel">
+                <div class="carousel-track"></div>
+                <div class="carousel-nav">
+                    <button class="carousel-btn carousel-prev">&lt;</button>
+                    <div class="carousel-center">
+                        <div class="carousel-dots"></div>
+                        <span class="page-counter" id="showcase-counter">1 / 1</span>
+                    </div>
+                    <button class="carousel-btn carousel-next">&gt;</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="carousel-section hidden" id="results-section">
+            <h2 id="results-title">RECOMMENDATIONS</h2>
+            <p class="section-subtitle"></p>
+            <div class="carousel-wrapper" id="results-carousel">
+                <div class="carousel-track"></div>
+                <div class="carousel-nav">
+                    <button class="carousel-btn carousel-prev">&lt;</button>
+                    <div class="carousel-center">
+                        <div class="carousel-dots"></div>
+                        <span class="page-counter" id="results-counter">1 / 1</span>
+                    </div>
+                    <button class="carousel-btn carousel-next">&gt;</button>
+                </div>
+            </div>
+            <button id="back-btn" class="btn-secondary">BACK TO SHOWCASE</button>
+        </section>
+
+        <footer>
+            <p>SEARCHING FROM <span id="model-count">---</span> OPEN-WEIGHT MODELS</p>
+        </footer>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script src="app.js"></script>
+</body>
+</html>

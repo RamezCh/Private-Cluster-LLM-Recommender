@@ -2,7 +2,7 @@
 
 import os
 
-from backend.logging import get_logger
+from backend.logger import get_logger
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["TQDM_DISABLE"] = "1"
