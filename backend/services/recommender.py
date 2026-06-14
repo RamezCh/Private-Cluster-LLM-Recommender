@@ -154,10 +154,8 @@ class LLMRecommender:
     ) -> list[ScoredModel]:
         start = time.time()
 
-        if len(use_case_text) > 5000:
-            use_case_text = use_case_text[:5000]
-        if len(user_query) > 5000:
-            user_query = user_query[:5000]
+        use_case_text = use_case_text[:5000]
+        user_query = user_query[:5000]
 
         use_case, _ = detect_use_case(use_case_text)
         if not use_case or use_case == DEFAULT_USE_CASE:
@@ -165,24 +163,36 @@ class LLMRecommender:
                 use_case = DEFAULT_USE_CASE
 
         total_vram = hardware.total_vram_gb
+
+        # Pre-compute VRAM threshold: minimum FP16 VRAM a model can have
+        # to fit at INT4 quantization (the loosest fit)
+        from config.config import VRAM_MULTIPLIERS as VM
+        max_fp16_for_int4 = total_vram / VM["int4"]  # models with fp16 <= this threshold fit
+
         compatible = [
             m for m in self.models
-            if _determine_quant(m.get("vram_gb", {}).get("fp16", 0), total_vram) != "Insufficient"
+            if (m.get("vram_gb", {}).get("fp16", 0) or 0) <= max_fp16_for_int4
         ]
 
         if not compatible:
             logger.warning(f"No models fit {hardware.gpu_name} ({total_vram}GB)")
             return []
 
+        # Semantic search: build dict once, O(1) lookups per model
         emb_svc = get_embedding_service()
-        sem_results = {}
+        sem_results: dict[str, float] = {}
         if emb_svc.index is not None:
             for mid, score in emb_svc.search(user_query, top_k=100):
                 sem_results[mid] = score
 
         weights = USE_CASE_BENCHMARK_WEIGHTS.get(use_case, USE_CASE_BENCHMARK_WEIGHTS["general"])
-        scored = []
+        w_coding = weights["coding"]
+        w_math = weights["math"]
+        w_reasoning = weights["reasoning"]
+        w_ii = weights["intelligence_index"]
+        sw, bw, hw_w = self.semantic_weight, self.benchmark_weight, self.hardware_weight
 
+        scored = []
         for model in compatible:
             mid = model.get("model_id", "")
             sem_score = sem_results.get(mid, 0.5)
@@ -192,19 +202,13 @@ class LLMRecommender:
             m = bmarks.get("math", 0) or 0
             r = bmarks.get("reasoning", 0) or 0
             ii = bmarks.get("intelligence_index", 0) or 0
-            bm_score = (
-                weights["coding"] * c + weights["math"] * m +
-                weights["reasoning"] * r + weights["intelligence_index"] * ii
-            ) / 100.0
+            bm_score = (w_coding * c + w_math * m + w_reasoning * r + w_ii * ii) / 100.0
 
-            vram_fp16 = model.get("vram_gb", {}).get("fp16", 0)
+            vram_gb = model.get("vram_gb", {})
+            vram_fp16 = vram_gb.get("fp16", 0)
             hw_score = calculate_hardware_score(vram_fp16, total_vram)
 
-            final = (
-                self.semantic_weight * sem_score +
-                self.benchmark_weight * bm_score +
-                self.hardware_weight * hw_score
-            )
+            final = sw * sem_score + bw * bm_score + hw_w * hw_score
 
             scored.append(ScoredModel(
                 model_id=mid,
@@ -219,8 +223,8 @@ class LLMRecommender:
                 intelligence_index=ii,
                 safetensors_size_gb=model.get("safetensors_size_gb") or 0,
                 vram_fp16=vram_fp16,
-                vram_int8=model.get("vram_gb", {}).get("int8", 0),
-                vram_int4=model.get("vram_gb", {}).get("int4", 0),
+                vram_int8=vram_gb.get("int8", 0),
+                vram_int4=vram_gb.get("int4", 0),
                 hosting_strategy=model.get("hosting_strategy", "unknown"),
                 is_moe=model.get("is_moe", False),
                 semantic_score=sem_score,
@@ -231,17 +235,18 @@ class LLMRecommender:
             ))
 
         scored.sort(key=lambda x: x.final_score, reverse=True)
+        result = scored[:top_k]
 
         latency_ms = (time.time() - start) * 1000
         try:
             if self._wandb.enabled:
-                top = scored[0] if scored else None
+                top = result[0] if result else None
                 self._wandb.log_recommendation(
                     query=user_query[:1000],
                     hardware=f"{hardware.count}x {hardware.gpu_name}",
                     use_case=use_case,
                     num_compatible=len(compatible),
-                    num_returned=len(scored[:top_k]),
+                    num_returned=len(result),
                     top_model=top.model_id if top else "N/A",
                     top_model_score=top.final_score if top else 0.0,
                     latency_ms=latency_ms,
@@ -249,8 +254,8 @@ class LLMRecommender:
         except Exception as e:
             logger.warning(f"W&B logging failed: {e}")
 
-        logger.info(f"Done in {latency_ms:.1f}ms, {len(scored[:top_k])} returned")
-        return scored[:top_k]
+        logger.info(f"Done in {latency_ms:.1f}ms, {len(result)} returned")
+        return result
 
     @property
     def model_count(self) -> int:

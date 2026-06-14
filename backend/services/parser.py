@@ -122,9 +122,6 @@ def determine_quantization(model_vram: float, total_vram: float) -> str:
 
 def calculate_benchmark_score(coding: float, math: float, reasoning: float,
                                intelligence_index: float, use_case: str) -> float:
-    weights = {
-        "coding": 0.25, "math": 0.25, "reasoning": 0.25, "intelligence_index": 0.25
-    }
     from config.config import USE_CASE_BENCHMARK_WEIGHTS
     w = USE_CASE_BENCHMARK_WEIGHTS.get(use_case, USE_CASE_BENCHMARK_WEIGHTS["general"])
     score = (w["coding"] * (coding or 0) + w["math"] * (math or 0) +

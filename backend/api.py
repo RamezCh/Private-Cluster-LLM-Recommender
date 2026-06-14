@@ -1,9 +1,11 @@
 """FastAPI server with static file serving for HTML/JS/CSS frontend."""
 
+import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,16 +14,21 @@ from pydantic import BaseModel, Field
 
 from backend.services.parser import parse_hardware_input, ParsedHardware
 from backend.services.recommender import get_recommender, LLMRecommender
+from backend.services.hybrid_recommender import get_hybrid_recommender
+from backend.services.collaborative import get_collaborative_filter
 from backend.logger import get_logger
 
 logger = get_logger(__name__)
+
+FEEDBACK_FILE = Path(__file__).parent.parent / "data_gathering_pipeline" / "data" / "feedback_data.jsonl"
+FEEDBACK_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 app = FastAPI(
     title="LLM Recommender API",
     description="Recommend locally-hostable open-weight LLMs",
-    version="1.0.0",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -36,19 +43,46 @@ class RecommendRequest(BaseModel):
     hardware_text: str = Field(..., description="e.g. '8 A100s', '4 RTX 4090s', 'MacBook M3 Max'")
     use_case: str = Field(..., description="e.g. 'code generation', 'math reasoning'")
     top_k: Optional[int] = Field(5, ge=1, le=20)
+    mode: Literal["hybrid", "pure"] = Field("pure", description="'hybrid' combines CF + content, 'pure' is content-only")
+    user_id: Optional[str] = Field(None, description="User ID for personalized hybrid recommendations")
 
 
 class RecommendResponse(BaseModel):
     success: bool
+    mode: str
     hardware: Optional[dict]
     use_case: str
     recommendations: list[dict]
+    user_has_feedback: bool = False
     error: Optional[str] = None
 
 
 class ShowcaseResponse(BaseModel):
     success: bool
     showcase: list[dict]
+    error: Optional[str] = None
+
+
+class FeedbackRequest(BaseModel):
+    user_id: str = Field(..., description="Unique user identifier")
+    model_id: str = Field(..., description="Model ID that was recommended")
+    rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5")
+    hardware_used: Optional[str] = Field(None, description="Hardware configuration used")
+    use_case: Optional[str] = Field(None, description="Use case for the recommendation")
+
+
+class FeedbackResponse(BaseModel):
+    success: bool
+    message: str
+    feedback_id: Optional[str] = None
+
+
+class FeedbackStatsResponse(BaseModel):
+    success: bool
+    total_feedbacks: int = 0
+    avg_rating: float = 0.0
+    ratings_distribution: dict = {}
+    ratings_per_model: dict = {}
     error: Optional[str] = None
 
 
@@ -125,12 +159,13 @@ def showcase():
 
 @app.post("/recommend", response_model=RecommendResponse)
 def recommend(req: RecommendRequest):
-    logger.info(f"Request: hardware='{req.hardware_text}', use_case='{req.use_case}'")
+    logger.info(f"Request: hardware='{req.hardware_text}', use_case='{req.use_case}', mode='{req.mode}'")
 
     hw = parse_hardware_input(req.hardware_text)
     if hw is None:
         return RecommendResponse(
             success=False,
+            mode=req.mode,
             hardware=None,
             use_case=req.use_case,
             recommendations=[],
@@ -147,27 +182,151 @@ def recommend(req: RecommendRequest):
     }
 
     try:
-        results = get_recommender().recommend(
-            hardware=hw,
-            use_case_text=req.use_case,
-            user_query=f"{req.use_case} {req.hardware_text}",
-            top_k=req.top_k or 5,
-        )
-        return RecommendResponse(
-            success=True,
-            hardware=hw_dict,
-            use_case=req.use_case,
-            recommendations=[r.to_dict() for r in results],
-        )
+        if req.mode == "hybrid":
+            hybrid_rec = get_hybrid_recommender(alpha=0.6)
+            user_has_data = req.user_id and hybrid_rec.collaborative_filter.has_user_data(req.user_id)
+            
+            results = hybrid_rec.get_hybrid_recommendations(
+                hardware=hw,
+                use_case_text=req.use_case,
+                user_query=f"{req.use_case} {req.hardware_text}",
+                user_id=req.user_id,
+                top_k=req.top_k or 5,
+            )
+            
+            rec_dicts = []
+            for r in results:
+                d = r.to_dict()
+                d["cf_prediction"] = r.cf_prediction
+                d["cf_confidence"] = r.cf_confidence
+                d["hybrid_score"] = r.hybrid_score
+                d["blend_weight"] = r.blend_weight
+                rec_dicts.append(d)
+            
+            return RecommendResponse(
+                success=True,
+                mode="hybrid",
+                hardware=hw_dict,
+                use_case=req.use_case,
+                recommendations=rec_dicts,
+                user_has_feedback=user_has_data,
+            )
+        else:
+            results = get_recommender().recommend(
+                hardware=hw,
+                use_case_text=req.use_case,
+                user_query=f"{req.use_case} {req.hardware_text}",
+                top_k=req.top_k or 5,
+            )
+            return RecommendResponse(
+                success=True,
+                mode="pure",
+                hardware=hw_dict,
+                use_case=req.use_case,
+                recommendations=[r.to_dict() for r in results],
+                user_has_feedback=False,
+            )
     except Exception as e:
         logger.error(f"Error generating recommendations: {e}")
         return RecommendResponse(
             success=False,
+            mode=req.mode,
             hardware=hw_dict,
             use_case=req.use_case,
             recommendations=[],
             error="Failed to generate recommendations. Please try again.",
         )
+
+
+def _load_feedback_data() -> list[dict]:
+    """Load all feedback records from the JSONL file."""
+    if not FEEDBACK_FILE.exists():
+        return []
+    records = []
+    with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return records
+
+
+def _save_feedback_record(record: dict) -> None:
+    """Append a single feedback record to the JSONL file."""
+    with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+@app.post("/feedback", response_model=FeedbackResponse)
+def submit_feedback(req: FeedbackRequest):
+    """Submit feedback for a recommendation."""
+    logger.info(f"Feedback received: user={req.user_id}, model={req.model_id}, rating={req.rating}")
+    
+    try:
+        now = datetime.utcnow()
+        feedback_record = {
+            "user_id": req.user_id,
+            "model_id": req.model_id,
+            "rating": req.rating,
+            "hardware_used": req.hardware_used or "",
+            "use_case": req.use_case or "",
+            "recommended_at": now.isoformat(),
+            "created_at": now.isoformat(),
+        }
+        _save_feedback_record(feedback_record)
+        return FeedbackResponse(
+            success=True,
+            message="Thank you for your feedback!",
+            feedback_id=feedback_record["recommended_at"],
+        )
+    except Exception as e:
+        logger.error(f"Error saving feedback: {e}")
+        return FeedbackResponse(success=False, message="Failed to save feedback")
+
+
+@app.get("/feedback/stats", response_model=FeedbackStatsResponse)
+def get_feedback_stats():
+    """Get aggregate feedback statistics."""
+    try:
+        records = _load_feedback_data()
+        if not records:
+            return FeedbackStatsResponse(success=True, total_feedbacks=0)
+        
+        total = len(records)
+        ratings = [r["rating"] for r in records]
+        avg_rating = sum(ratings) / total if total > 0 else 0.0
+        
+        ratings_dist = {str(i): 0 for i in range(1, 6)}
+        for r in ratings:
+            key = str(r)
+            ratings_dist[key] = ratings_dist.get(key, 0) + 1
+        
+        ratings_per_model: dict = {}
+        for r in records:
+            model = r["model_id"]
+            if model not in ratings_per_model:
+                ratings_per_model[model] = {"count": 0, "total": 0, "avg": 0.0}
+            ratings_per_model[model]["count"] += 1
+            ratings_per_model[model]["total"] += r["rating"]
+        
+        for model in ratings_per_model:
+            count = ratings_per_model[model]["count"]
+            total_score = ratings_per_model[model]["total"]
+            ratings_per_model[model]["avg"] = round(total_score / count, 2) if count > 0 else 0.0
+        
+        return FeedbackStatsResponse(
+            success=True,
+            total_feedbacks=total,
+            avg_rating=round(avg_rating, 2),
+            ratings_distribution=ratings_dist,
+            ratings_per_model=ratings_per_model,
+        )
+    except Exception as e:
+        logger.error(f"Error getting feedback stats: {e}")
+        return FeedbackStatsResponse(success=False, error="Failed to load feedback statistics")
 
 
 @app.get("/{file_path:path}")

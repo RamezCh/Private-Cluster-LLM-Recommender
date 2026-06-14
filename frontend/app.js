@@ -1,5 +1,40 @@
 const API_BASE = '';
 
+let cachedRecommendations = {
+    pure: [],
+    hybrid: []
+};
+let currentTab = 'recommended';
+
+function generateUserId() {
+    const stored = sessionStorage.getItem('llm_recommender_user_id');
+    if (stored) return stored;
+    const newId = 'user_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now().toString(36);
+    sessionStorage.setItem('llm_recommender_user_id', newId);
+    return newId;
+}
+
+function switchTab(tabName) {
+    const tabBtns = document.querySelectorAll('.result-tabs .tab-btn');
+    const tabDesc = document.getElementById('tab-description');
+    
+    tabBtns.forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+    });
+    
+    currentTab = tabName;
+    
+    if (tabName === 'hybrid') {
+        tabDesc.textContent = 'Personalized based on your feedback + similar users';
+    } else {
+        tabDesc.textContent = 'Based on your hardware and use case';
+    }
+    
+    if (cachedRecommendations[tabName].length > 0) {
+        displayRecommendations(cachedRecommendations[tabName], tabName);
+    }
+}
+
 class Carousel {
     constructor(containerId, counterId) {
         this.container = document.getElementById(containerId);
@@ -161,14 +196,19 @@ function formatNumber(num) {
     return Number(num).toLocaleString();
 }
 
-function createCardHTML(item) {
+function createCardHTML(item, mode = 'pure') {
     const model = item.model || item || {};
     const hardware = item.hardware || {};
     const modelName = model.base_model || model.model_id || 'Unknown Model';
     const provider = model.model_type || 'Open-weight';
+    const modelId = model.base_model || model.model_id || 'Unknown';
+    
+    const cfPrediction = item.cf_prediction;
+    const cfConfidence = item.cf_confidence;
+    const showCFPrediction = mode === 'hybrid' && cfPrediction != null;
     
     return `
-        <div class="card">
+        <div class="card" data-model-id="${escapeHtml(modelId)}">
             <span class="card-category">${item.category || item.label || 'Model'}</span>
             <h3 class="card-title">${modelName}</h3>
             <p class="card-provider">${provider}</p>
@@ -186,11 +226,29 @@ function createCardHTML(item) {
                     <div class="stat-value">${model.vram_fp16_gb || '?'}GB</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-label">Score</div>
-                    <div class="stat-value">${model.scores?.final ? (model.scores.final * 100).toFixed(0) + '%' : 'N/A'}</div>
+                    <div class="stat-label">${mode === 'hybrid' ? 'Hybrid' : 'Score'}</div>
+                    <div class="stat-value">${model.scores?.final ? (model.scores.final * 100).toFixed(0) + '%' : (item.hybrid_score ? (item.hybrid_score * 100).toFixed(0) + '%' : 'N/A')}</div>
                 </div>
             </div>
+            ${showCFPrediction ? `
+            <div class="cf-prediction">
+                <div class="cf-label">Predicted Rating</div>
+                <div class="cf-value">${cfPrediction.toFixed(1)}/5</div>
+                <div class="cf-confidence">${(cfConfidence * 100).toFixed(0)}% confidence</div>
+            </div>
+            ` : ''}
             ${model.hf_repo_id ? `<a href="https://huggingface.co/${model.hf_repo_id}" target="_blank" class="card-link">View on HuggingFace</a>` : ''}
+            <div class="card-feedback">
+                <div class="feedback-label">Rate this recommendation</div>
+                <div class="rating-buttons">
+                    <button class="rating-btn" data-rating="1">1</button>
+                    <button class="rating-btn" data-rating="2">2</button>
+                    <button class="rating-btn" data-rating="3">3</button>
+                    <button class="rating-btn" data-rating="4">4</button>
+                    <button class="rating-btn" data-rating="5">5</button>
+                </div>
+                <div class="feedback-status"></div>
+            </div>
             <div class="card-details">
                 <h4>Benchmarks</h4>
                 <div class="benchmark-grid">
@@ -199,6 +257,49 @@ function createCardHTML(item) {
             </div>
         </div>
     `;
+}
+
+function displayRecommendations(recommendations, mode) {
+    const track = document.querySelector('#results-carousel .carousel-track');
+    track.innerHTML = recommendations.map(item => createCardHTML(item, mode)).join('');
+    resultsCarousel = new Carousel('results-carousel', 'results-counter');
+    resultsCarousel.init();
+    attachCardListeners();
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function submitRating(modelId, rating) {
+    const userId = generateUserId();
+    const hardwareText = document.getElementById('gpu-select')?.selectedOptions?.[0]?.text || '';
+    const useCase = getSelectedUseCases();
+    
+    try {
+        const response = await fetch(`${API_BASE}/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: userId,
+                model_id: modelId,
+                rating: rating,
+                hardware_used: hardwareText,
+                use_case: useCase
+            })
+        });
+        const data = await response.json();
+        if (data.success) {
+            return { success: true, message: 'Thank you for your feedback!' };
+        } else {
+            return { success: false, message: data.message || 'Failed to submit feedback' };
+        }
+    } catch (error) {
+        console.error('Rating submission error:', error);
+        return { success: false, message: 'Network error. Please try again.' };
+    }
 }
 
 function createBenchmarkHTML(benchmarks) {
@@ -213,9 +314,13 @@ function createBenchmarkHTML(benchmarks) {
 
 function attachCardListeners() {
     document.querySelectorAll('.card').forEach(card => {
+        const details = card.querySelector('.card-details');
+        
         card.addEventListener('click', (e) => {
             if (e.target.closest('.card-link')) return;
-            const details = card.querySelector('.card-details');
+            if (e.target.closest('.rating-btn')) return;
+            if (e.target.closest('.feedback-status')) return;
+            
             if (details) {
                 if (details.classList.contains('visible')) {
                     details.classList.remove('visible');
@@ -224,6 +329,43 @@ function attachCardListeners() {
                     details.classList.add('visible');
                 }
             }
+        });
+        
+        const ratingBtns = card.querySelectorAll('.rating-btn');
+        ratingBtns.forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (btn.classList.contains('submitted')) return;
+                
+                const rating = parseInt(btn.dataset.rating);
+                const modelId = card.dataset.modelId;
+                const statusEl = card.querySelector('.feedback-status');
+                
+                ratingBtns.forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                statusEl.textContent = 'Submitting...';
+                
+                const result = await submitRating(modelId, rating);
+                
+                if (result.success) {
+                    statusEl.textContent = '✓ ' + result.message;
+                    statusEl.classList.add('success');
+                    ratingBtns.forEach(b => {
+                        if (parseInt(b.dataset.rating) <= rating) {
+                            b.classList.add('submitted');
+                        }
+                    });
+                } else {
+                    statusEl.textContent = '✗ ' + result.message;
+                    statusEl.classList.add('error');
+                }
+                
+                setTimeout(() => {
+                    if (result.success) {
+                        statusEl.textContent = 'Rated: ' + rating + '/5';
+                    }
+                }, 3000);
+            });
         });
     });
 }
@@ -277,6 +419,7 @@ async function fetchRecommendations() {
     const gpuCount = document.getElementById('gpu-count');
     const topKSelect = document.getElementById('top-k-select');
     const useCase = getSelectedUseCases();
+    const userId = generateUserId();
     
     const selectedOption = gpuSelect.options[gpuSelect.selectedIndex];
     const gpuName = selectedOption?.text || '';
@@ -304,27 +447,53 @@ async function fetchRecommendations() {
 
     resultsCarousel = new Carousel('results-carousel', 'results-counter');
     resultsCarousel.init();
+    
+    cachedRecommendations = { pure: [], hybrid: [] };
 
     try {
-        const response = await fetch(`${API_BASE}/recommend`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hardware_text: hardwareText, use_case: useCase, top_k: topK })
-        });
+        const [pureRes, hybridRes] = await Promise.all([
+            fetch(`${API_BASE}/recommend`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    hardware_text: hardwareText, 
+                    use_case: useCase, 
+                    top_k: topK,
+                    mode: 'pure'
+                })
+            }),
+            fetch(`${API_BASE}/recommend`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    hardware_text: hardwareText, 
+                    use_case: useCase, 
+                    top_k: topK,
+                    mode: 'hybrid',
+                    user_id: userId
+                })
+            })
+        ]);
         
-        const data = await response.json();
+        const pureData = await pureRes.json();
+        const hybridData = await hybridRes.json();
         
-        if (data.success && data.recommendations?.length > 0) {
-            track.innerHTML = data.recommendations.map(item => createCardHTML(item)).join('');
-            resultsCarousel = new Carousel('results-carousel', 'results-counter');
-            resultsCarousel.init();
-            attachCardListeners();
+        if (pureData.success && pureData.recommendations?.length > 0) {
+            cachedRecommendations.pure = pureData.recommendations;
+        }
+        
+        if (hybridData.success && hybridData.recommendations?.length > 0) {
+            cachedRecommendations.hybrid = hybridData.recommendations;
+        }
+        
+        if (cachedRecommendations.pure.length > 0) {
+            displayRecommendations(cachedRecommendations.pure, 'pure');
             
-            document.getElementById('results-title').textContent = `Top ${data.recommendations.length} Recommendations`;
+            document.getElementById('results-title').textContent = `Top ${cachedRecommendations.pure.length} Recommendations`;
             document.querySelector('#results-section .section-subtitle').textContent = 
                 `${gpuName}${count > 1 ? ' x' + count : ''} for "${useCase}"`;
         } else {
-            showToast(data.error || 'No recommendations found', 'error');
+            showToast(pureData.error || 'No recommendations found', 'error');
             resultsSection.classList.add('hidden');
             showcaseSection.classList.remove('hidden');
         }
@@ -432,6 +601,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (backBtn) {
         backBtn.addEventListener('click', handleBackToShowcase);
     }
+    
+    const tabBtns = document.querySelectorAll('.result-tabs .tab-btn');
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            switchTab(btn.dataset.tab);
+        });
+    });
 
     showcaseCarousel = new Carousel('showcase-carousel', 'showcase-counter');
     showcaseCarousel.init();
