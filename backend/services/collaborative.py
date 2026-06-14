@@ -11,7 +11,7 @@ from scipy.sparse.linalg import svds
 class CollaborativeFilter:
     """SVD-based collaborative filter for rating predictions."""
     
-    def __init__(self, feedback_path: Path, n_factors: int = 50, min_ratings: int = 3):
+    def __init__(self, feedback_path: Path, n_factors: int = 50, min_ratings: int = 1):
         self.feedback_path = feedback_path
         self.n_factors = n_factors
         self.min_ratings = min_ratings
@@ -81,20 +81,24 @@ class CollaborativeFilter:
         
         matrix = sparse.csr_matrix((data, (rows, cols)), shape=(n_users, n_models))
         
+        # Calculate global mean rating for Bayesian shrinkage
+        total_rating_sum = sum(r["rating"] for r in records)
+        global_mean = total_rating_sum / len(records) if records else 3.5
+        
         user_means = np.zeros(n_users)
+        K = 2.0  # Smoothing parameter
         for i in range(n_users):
-            if user_counts[i] >= self.min_ratings:
-                user_means[i] = user_totals[i] / user_counts[i]
-            elif user_counts[i] > 0:
-                user_means[i] = user_totals[i] / user_counts[i]
+            if user_counts[i] > 0:
+                # Bayesian shrinkage: pulls user mean towards global mean
+                user_means[i] = (user_totals[i] + K * global_mean) / (user_counts[i] + K)
             else:
-                user_means[i] = 3.5
+                user_means[i] = global_mean
         
         return matrix, user_means
     
-    def train(self) -> "CollaborativeFilter":
+    def train(self, force: bool = False) -> "CollaborativeFilter":
         """Train the collaborative filter using SVD."""
-        if self._trained:
+        if self._trained and not force:
             return self
         
         self._feedback_cache = self._load_feedback()

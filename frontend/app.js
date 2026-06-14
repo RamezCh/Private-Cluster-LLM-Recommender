@@ -1,4 +1,6 @@
-const API_BASE = '';
+const API_BASE = window.location.protocol === 'file:' || (window.location.port !== '8000' && window.location.port !== '')
+    ? (window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'http://127.0.0.1:8000')
+    : '';
 
 let cachedRecommendations = {
     pure: [],
@@ -30,8 +32,9 @@ function switchTab(tabName) {
         tabDesc.textContent = 'Based on your hardware and use case';
     }
     
-    if (cachedRecommendations[tabName].length > 0) {
-        displayRecommendations(cachedRecommendations[tabName], tabName);
+    const key = tabName === 'recommended' ? 'pure' : tabName;
+    if (cachedRecommendations[key] && cachedRecommendations[key].length > 0) {
+        displayRecommendations(cachedRecommendations[key], key);
     }
 }
 
@@ -260,10 +263,12 @@ function createCardHTML(item, mode = 'pure') {
 }
 
 function displayRecommendations(recommendations, mode) {
-    const track = document.querySelector('#results-carousel .carousel-track');
-    track.innerHTML = recommendations.map(item => createCardHTML(item, mode)).join('');
-    resultsCarousel = new Carousel('results-carousel', 'results-counter');
-    resultsCarousel.init();
+    const html = recommendations.map(item => createCardHTML(item, mode)).join('');
+    if (!resultsCarousel) {
+        resultsCarousel = new Carousel('results-carousel', 'results-counter');
+        resultsCarousel.init();
+    }
+    resultsCarousel.setCards(html);
     attachCardListeners();
 }
 
@@ -350,11 +355,48 @@ function attachCardListeners() {
                 if (result.success) {
                     statusEl.textContent = '✓ ' + result.message;
                     statusEl.classList.add('success');
+                    showToast('Feedback saved! Check the "For You" tab to view personalized recommendations.', 'success');
                     ratingBtns.forEach(b => {
                         if (parseInt(b.dataset.rating) <= rating) {
                             b.classList.add('submitted');
                         }
                     });
+                    
+                    // Trigger real-time background hybrid recommendation refresh
+                    const gpuSelect = document.getElementById('gpu-select');
+                    const gpuCount = document.getElementById('gpu-count');
+                    const topKSelect = document.getElementById('top-k-select');
+                    const selectedOption = gpuSelect?.options[gpuSelect?.selectedIndex || 0];
+                    const gpuNameName = selectedOption?.text || '';
+                    if (gpuNameName && gpuNameName !== '-- SELECT GPU --') {
+                        const cnt = parseInt(gpuCount?.value) || 1;
+                        const tk = parseInt(topKSelect?.value) || 5;
+                        const hwText = cnt > 1 ? `${cnt}x ${gpuNameName}` : gpuNameName;
+                        const uc = getSelectedUseCases();
+                        const uId = generateUserId();
+                        
+                        fetch(`${API_BASE}/recommend`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                hardware_text: hwText, 
+                                use_case: uc, 
+                                top_k: tk,
+                                mode: 'hybrid',
+                                user_id: uId
+                            })
+                        })
+                        .then(res => res.json())
+                        .then(hybridData => {
+                            if (hybridData.success && hybridData.recommendations?.length > 0) {
+                                cachedRecommendations.hybrid = hybridData.recommendations;
+                                if (currentTab === 'hybrid') {
+                                    displayRecommendations(cachedRecommendations.hybrid, 'hybrid');
+                                }
+                            }
+                        })
+                        .catch(err => console.error('Failed to update hybrid recommendations:', err));
+                    }
                 } else {
                     statusEl.textContent = '✗ ' + result.message;
                     statusEl.classList.add('error');
@@ -386,16 +428,13 @@ function showLoadingSkeletons(track) {
 async function fetchShowcase() {
     const track = document.querySelector('#showcase-carousel .carousel-track');
     showLoadingSkeletons(track);
-    showcaseCarousel?.init();
 
     try {
         const response = await fetch(`${API_BASE}/api/showcase`);
         const data = await response.json();
         
         if (data.success && data.showcase?.length > 0) {
-            track.innerHTML = data.showcase.map(item => createCardHTML(item)).join('');
-            showcaseCarousel = new Carousel('showcase-carousel', 'showcase-counter');
-            showcaseCarousel.init();
+            showcaseCarousel.setCards(data.showcase.map(item => createCardHTML(item)).join(''));
             attachCardListeners();
         } else {
             track.innerHTML = `
@@ -408,9 +447,27 @@ async function fetchShowcase() {
         console.error('Showcase fetch error:', error);
         track.innerHTML = `
             <div class="empty-state">
-                <p>Failed to load showcase</p>
+                <p>Failed to load showcase. Is the backend server running?</p>
+                <button id="retry-showcase-btn" class="btn-secondary" style="margin-top: 0.75rem; padding: 0.4rem 1rem; font-size: 0.85rem; border: 1px solid var(--border-color);">Retry Connection</button>
             </div>
         `;
+        const retryBtn = document.getElementById('retry-showcase-btn');
+        if (retryBtn) {
+            retryBtn.addEventListener('click', fetchShowcase);
+        }
+    }
+}
+
+async function fetchModelCount() {
+    try {
+        const response = await fetch(`${API_BASE}/models/count`);
+        const data = await response.json();
+        if (data.count != null) {
+            const countEl = document.getElementById('model-count');
+            if (countEl) countEl.textContent = formatNumber(data.count);
+        }
+    } catch (error) {
+        console.error('Failed to fetch model count:', error);
     }
 }
 
@@ -445,8 +502,10 @@ async function fetchRecommendations() {
     showcaseSection.classList.add('hidden');
     resultsSection.classList.remove('hidden');
 
-    resultsCarousel = new Carousel('results-carousel', 'results-counter');
-    resultsCarousel.init();
+    if (!resultsCarousel) {
+        resultsCarousel = new Carousel('results-carousel', 'results-counter');
+        resultsCarousel.init();
+    }
     
     cachedRecommendations = { pure: [], hybrid: [] };
 
@@ -487,7 +546,7 @@ async function fetchRecommendations() {
         }
         
         if (cachedRecommendations.pure.length > 0) {
-            displayRecommendations(cachedRecommendations.pure, 'pure');
+            switchTab('recommended');
             
             document.getElementById('results-title').textContent = `Top ${cachedRecommendations.pure.length} Recommendations`;
             document.querySelector('#results-section .section-subtitle').textContent = 
@@ -613,6 +672,7 @@ document.addEventListener('DOMContentLoaded', () => {
     showcaseCarousel.init();
     
     fetchShowcase();
+    fetchModelCount();
 });
 
 window.addEventListener('resize', () => {

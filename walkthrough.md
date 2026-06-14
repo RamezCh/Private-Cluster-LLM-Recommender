@@ -349,13 +349,33 @@ With the `generate_fake_feedback.py` script generating data for 100 users × 5�
 
 **Memory**: Total SVD factors ≈ $45{,}050 \times 8 \text{ bytes} \approx 0.35 \text{ MB}$ (float64).
 
-### 7.5 Mean-Centering Rationale
+### 7.5 Mean-Centering & Bayesian Shrinkage Rationale
 
-We subtract per-user means $\mu_u$ before SVD because:
+We center user ratings before running SVD to remove individual rating biases. However, simple mean-centering suffers from severe issues when a user has very few ratings (e.g. 1 rating). If a user rates only one model with $5.0$, their mean is $5.0$, and centering subtracts their mean, resulting in a centered rating of exactly $0.0$. This wipes out the preference signal entirely, making SVD treat them as if they have no preference at all.
 
-1. **Removes user bias**: Some users rate everything high (generous raters), others low (harsh raters). Mean-centering isolates the **relative preference** signal.
-2. **Improves SVD convergence**: The centered matrix has mean near zero, so singular values capture genuine preference patterns rather than mean rating levels.
-3. **Cold-start fallback**: For unknown users, we predict $\mu_u = 3.5$ (global midpoint), gracefully degrading.
+To solve this, we implement **Bayesian Shrinkage** (smoothing) for user means:
+
+$$\mu_u = \frac{\sum_{m \in I_u} r_{u,m} + K \cdot \mu_{\text{global}}}{|I_u| + K}$$
+
+where:
+- $I_u$ is the set of models rated by user $u$.
+- $r_{u,m}$ is the rating given by user $u$ to model $m$.
+- $\mu_{\text{global}}$ is the global mean rating across all users and models in the database.
+- $K = 2.0$ is the smoothing strength (equivalent to 2 pseudo-ratings at the global mean).
+
+**Why this works:**
+1. **Low Data Regime**: If $|I_u| = 1$ and the user rates model $m$ with $5.0$ (assuming $\mu_{\text{global}} = 3.5$):
+   $$\mu_u = \frac{5.0 + 2 \cdot 3.5}{1 + 2} = 4.0$$
+   The centered rating is $5.0 - 4.0 = +1.0$ (instead of $0.0$). SVD successfully propagates this $+1.0$ preference to similar models in the latent space.
+2. **High Data Regime**: As $|I_u| \to \infty$, the influence of $K \cdot \mu_{\text{global}}$ shrinks to zero, and $\mu_u$ converges to the user's actual empirical mean.
+3. **No Bias/Cold-Start**: For users with zero ratings, the formula falls back to $\mu_u = \mu_{\text{global}}$, providing a robust baseline.
+
+### 7.6 Real-Time Model Updates
+
+To make recommendations dynamically adaptive to user interactions:
+1. **Feedback Ingestion**: When a user rates a recommended model (via the UI), a POST request is sent to `/feedback`, which appends the rating record to `feedback_data.jsonl`.
+2. **On-the-Fly Retraining**: The backend immediately triggers the collaborative filter's `train(force=True)` method.
+3. **SVD Recalculation**: SVD mappings and matrices are rebuilt in-memory, running a new `svds()` factorization on the updated ratings matrix. This entire process takes under **100ms** for current matrix dimensions, updating user vectors in real-time so that subsequent recommendations instantly reflect user feedback.
 
 ---
 
@@ -376,9 +396,9 @@ where:
 
 The blend weight $\alpha$ adapts to data availability:
 
-$$\alpha_{\text{effective}} = \begin{cases} \alpha & \text{if user has } \geq 3 \text{ ratings (full personalization)} \\ \alpha \cdot \overline{c} & \text{if user is new, } \overline{c} \text{ = avg CF confidence} \\ 0 & \text{if no CF data at all (pure content-based)} \end{cases}$$
+$$\alpha_{\text{effective}} = \begin{cases} \alpha & \text{if user has } \geq 1 \text{ rating (full personalization)} \\ \alpha \cdot \overline{c} & \text{if user is new but has some predictions, } \overline{c} \text{ = avg CF confidence} \\ 0 & \text{if no CF data at all (pure content-based)} \end{cases}$$
 
-This implements a **smooth cold-start transition**: new users get pure content-based recommendations, gradually transitioning to personalized CF as they provide more feedback.
+This implements a **smooth cold-start transition**: new users get pure content-based recommendations, transitioning instantly to personalized CF as soon as they provide their first rating.
 
 ### 8.3 Normalization
 

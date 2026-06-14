@@ -39,6 +39,20 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def startup_event():
+    logger.info("Initializing recommender and pre-populating showcase cache at startup...")
+    try:
+        recommender = get_recommender()
+        picks = recommender.get_showcase_picks()
+        global _SHOWCASE_CACHE, _SHOWCASE_CACHE_TIME
+        _SHOWCASE_CACHE = picks
+        _SHOWCASE_CACHE_TIME = time.time()
+        logger.info(f"Showcase cache pre-populated with {len(picks)} picks at startup successfully!")
+    except Exception as e:
+        logger.error(f"Failed to pre-populate showcase cache at startup: {e}")
+
+
 class RecommendRequest(BaseModel):
     hardware_text: str = Field(..., description="e.g. '8 A100s', '4 RTX 4090s', 'MacBook M3 Max'")
     use_case: str = Field(..., description="e.g. 'code generation', 'math reasoning'")
@@ -277,6 +291,16 @@ def submit_feedback(req: FeedbackRequest):
             "created_at": now.isoformat(),
         }
         _save_feedback_record(feedback_record)
+        
+        # Retrain the collaborative filter with the new feedback in real-time
+        try:
+            from backend.services.collaborative import get_collaborative_filter
+            cf = get_collaborative_filter()
+            cf.train(force=True)
+            logger.info("Collaborative filter retrained successfully with new feedback")
+        except Exception as ex:
+            logger.error(f"Failed to retrain collaborative filter: {ex}")
+
         return FeedbackResponse(
             success=True,
             message="Thank you for your feedback!",
