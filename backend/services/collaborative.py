@@ -162,8 +162,8 @@ class CollaborativeFilter:
         
         predicted = max(1.0, min(5.0, predicted))
         
-        user_ratings_count = self.ratings_matrix.getnnz(user_idx)
-        model_ratings_count = self.ratings_matrix.getcol(model_idx).getnnz()
+        user_ratings_count = self.ratings_matrix.getrow(user_idx).nnz
+        model_ratings_count = self.ratings_matrix.getcol(model_idx).nnz
         confidence = min(1.0, (user_ratings_count + model_ratings_count) / 20.0)
         
         return float(predicted), float(confidence)
@@ -235,7 +235,7 @@ class CollaborativeFilter:
         if user_idx is None:
             return False
         
-        return self.ratings_matrix.getnnz(user_idx) >= self.min_ratings
+        return self.ratings_matrix.getrow(user_idx).nnz >= self.min_ratings
     
     @property
     def total_users(self) -> int:

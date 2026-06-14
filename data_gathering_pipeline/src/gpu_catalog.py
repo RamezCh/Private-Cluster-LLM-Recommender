@@ -7,18 +7,21 @@ backward compatibility with existing imports in the data pipeline.
 from pathlib import Path
 import sys
 
-_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(_root))
-
-from config.gpu_catalog import (
+from config import (
     GPU_CATALOG,
     GPU_NAME_MAPPINGS,
     GPUConfig,
-    GPU_TIERS,
-    get_gpu_config,
-    get_all_gpus_by_tier,
-    get_total_vram,
 )
+
+def get_gpu_config(gpu_id: str) -> GPUConfig:
+    return GPU_CATALOG.get(gpu_id.lower(), GPU_CATALOG["a100_80gb"])
+
+def get_all_gpus_by_tier(tier: str) -> dict[str, GPUConfig]:
+    return {k: v for k, v in GPU_CATALOG.items() if v.tier == tier}
+
+def get_total_vram(gpu_id: str, count: int = 1) -> float:
+    gpu = get_gpu_config(gpu_id)
+    return gpu.vram_gb * count
 
 __all__ = [
     "GPU_CATALOG",

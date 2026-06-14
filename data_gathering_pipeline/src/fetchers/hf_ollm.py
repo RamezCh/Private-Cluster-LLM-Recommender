@@ -7,7 +7,7 @@ from dataclasses import asdict
 from datasets import load_dataset
 from loguru import logger
 
-from src.config import HF_DATASETS, HF_TOKEN, OPEN_WEIGHT_FILTER, DEDUP_STRATEGY
+from src.config import HF_DATASETS, HF_TOKEN, OPEN_WEIGHT_FILTER, DEDUP_STRATEGY, OPEN_WEIGHT_ORGS
 from src.models import OpenLLMLeaderboardRow
 
 
@@ -171,15 +171,17 @@ class HFOpenLLMLeaderboardLoader:
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored[0][1]
 
-    def _variant_score(self, variant: OpenLLMLeaderboardRow) -> Tuple[int, int, int]:
+    def _variant_score(self, variant: OpenLLMLeaderboardRow) -> Tuple:
         """Score a variant for selection purposes.
 
-        Returns (benchmark_count, generation, type_preference).
-        Higher is better for all three.
+        Returns a sorting tuple (higher is better):
+        (is_official, benchmark_count, average_score, type_preference, generation)
         """
-        bench_count = self._count_valid_benchmarks(variant)
+        org = (variant.fullname or "").split("/")[0]
+        is_official = 1 if org.lower() in {o.strip().lower() for o in OPEN_WEIGHT_ORGS} else 0
 
-        gen = variant.generation
+        bench_count = self._count_valid_benchmarks(variant)
+        average = variant.average or 0
 
         type_order = DEDUP_STRATEGY.get("type_preference_order", ["💬", "🟢", "🔶", "🤝", "💻", "🔢", "⚡"])
         type_pref = len(type_order)
@@ -188,7 +190,13 @@ class HFOpenLLMLeaderboardLoader:
                 type_pref = i
                 break
 
-        return (bench_count, gen, -type_pref)
+        return (
+            is_official,
+            bench_count,
+            average,
+            -type_pref,
+            variant.generation,
+        )
 
     def get_deduped_model_names(self) -> List[str]:
         """Get list of canonical model names from deduplicated rows."""

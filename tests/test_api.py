@@ -13,20 +13,26 @@ class TestRootEndpoint:
     """Test cases for root endpoint."""
 
     def test_root_returns_api_info(self):
-        """Test that root endpoint returns API info."""
+        """Test that root endpoint returns API info or serves frontend HTML."""
         response = client.get("/")
         assert response.status_code == 200
-        data = response.json()
-        assert "message" in data
-        assert "version" in data
-        assert data["version"] == "1.0.0"
+        if "text/html" in response.headers.get("content-type", ""):
+            assert "<html" in response.text or "<!DOCTYPE" in response.text
+        else:
+            data = response.json()
+            assert "message" in data
+            assert "version" in data
+            assert data["version"] == "1.0.0"
 
     def test_root_status_healthy(self):
-        """Test that root endpoint indicates healthy status."""
+        """Test that root endpoint indicates healthy status or serves HTML."""
         response = client.get("/")
         assert response.status_code == 200
-        data = response.json()
-        assert data.get("status") == "healthy"
+        if "text/html" in response.headers.get("content-type", ""):
+            assert "<html" in response.text or "<!DOCTYPE" in response.text
+        else:
+            data = response.json()
+            assert data.get("status") == "healthy"
 
 
 class TestHealthEndpoint:

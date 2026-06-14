@@ -142,19 +142,7 @@ MODEL_TYPE_PATTERNS = {
 }
 
 
-def get_gpu_config(gpu_id: str) -> "GPUConfig":
-    from src.gpu_catalog import GPU_CATALOG
-    return GPU_CATALOG.get(gpu_id.lower(), GPU_CATALOG["a100_80gb"])
-
-
-def get_all_gpus_by_tier(tier: str) -> Dict[str, "GPUConfig"]:
-    from src.gpu_catalog import GPU_CATALOG
-    return {k: v for k, v in GPU_CATALOG.items() if v.tier == tier}
-
-
-def get_total_vram(gpu_id: str, count: int = 1) -> float:
-    gpu = get_gpu_config(gpu_id)
-    return gpu.vram_gb * count
+from src.gpu_catalog import get_gpu_config, get_all_gpus_by_tier, get_total_vram
 
 
 def is_proprietary_model(name: str, provider: str = "") -> bool:

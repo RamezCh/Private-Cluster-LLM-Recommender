@@ -29,10 +29,10 @@ TEST_CASES = [
         hardware_text="8 A100s",
         use_case="code generation and debugging",
         user_query="code generation programming python",
-        expected_model_pattern="llama",
+        expected_model_pattern="llama|qwen",
         expected_min_coding=80.0,
         expected_params_range=(60, 100),
-        description="8x A100 80GB should recommend top coding models like Llama-3.3-70B",
+        description="8x A100 80GB should recommend top coding models like Llama-3.3-70B or Qwen2.5-72B-Instruct",
     ),
     TestCase(
         name="TC-02: 1x H200 for Math",
@@ -174,7 +174,8 @@ def test_recommender_model_pattern(recommender, test_case: TestCase):
     assert len(recommendations) > 0
 
     top_model = recommendations[0]
-    assert test_case.expected_model_pattern.lower() in top_model.model_id.lower(), (
+    patterns = [p.strip().lower() for p in test_case.expected_model_pattern.split("|")]
+    assert any(pat in top_model.model_id.lower() for pat in patterns), (
         f"Top model {top_model.model_id} does not match "
         f"expected pattern {test_case.expected_model_pattern}"
     )

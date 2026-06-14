@@ -94,10 +94,7 @@ class ModelDeduplicator:
         patterns_to_strip = [
             r"\s*(chat|instruct|sft|dpo|rlhf|merged|merge|base|original|preferred)\s*",
             r"\s*(v\d+(?:\.\d+)?)\s*",
-            r"\s*\d+b\b",
-            r"\s*\d+\.\d+b\b",
             r"\s*(bfloat16|float16|float32|int4|int8|fp16|q4|q8|q16)\s*",
-            r"\s*(chatml|llama|phi|mistral|gemma|qwen|yi|deepseek)\s*",
         ]
         for pattern in patterns_to_strip:
             name = re.sub(pattern, " ", name, flags=re.IGNORECASE)

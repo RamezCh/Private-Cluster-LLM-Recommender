@@ -19,6 +19,8 @@
 11. [Frontend Application (WP: Frontend Application)](#11-frontend-application)
 12. [Algorithmic Complexity Analysis](#12-algorithmic-complexity-analysis)
 13. [Optimizations Applied](#13-optimizations-applied)
+14. [Pipeline Operations & CLI Reference](#14-pipeline-operations--cli-reference)
+15. [Frequently Asked Questions (FAQ)](#15-frequently-asked-questions-faq)
 
 ---
 
@@ -34,7 +36,7 @@ graph TB
         E --> F["Benchmark Merger"]
         F --> G["HF Metadata Enrichment<br/>(20 threads)"]
         G --> H["VRAM Calculator"]
-        H --> I["master_model_db.jsonl<br/>(~1,815 models)"]
+        H --> I["master_model_db.jsonl<br/>(~1,996 models)"]
     end
 
     subgraph "Embedding Pipeline"
@@ -101,7 +103,7 @@ Phase 3: Cross-source deduplication (fuzzy matching, Levenshtein-based)
 Phase 4: Benchmark priority-based merging
 Phase 5: HF metadata enrichment (parallel, 5 threads)
 Phase 6: VRAM calculation + hardware fit
-Phase 7: Save to master_model_db.jsonl
+Phase 7: Save to `master_model_db.jsonl`
 ```
 
 ### 3.2 Deduplication Algorithm
@@ -110,7 +112,7 @@ The deduplicator normalizes model names by stripping suffixes (`-instruct`, `-ch
 
 **Complexity**: $O(n \log n)$ for sorting + $O(n)$ for grouping = $O(n \log n)$ total, where $n$ is the number of raw model records.
 
-**Result**: Reduced from **2,254 → 1,815** unique models.
+**Result**: Reduced from **2,254 → 1,996** unique models.
 
 ---
 
@@ -136,9 +138,9 @@ Documented in `DATA_QUALITY.md` with the following coverage:
 
 For models without HF Hub metadata:
 
-$$\text{safetensors\_size\_gb} = \text{params\_billions} \times 2$$
+$$S = P \times 2$$
 
-This assumes **FP16 precision** (2 bytes per parameter). For a 70B model:
+where $S$ is the estimated safetensors model size in GB and $P$ is the number of parameters in billions. This assumes **FP16 precision** (2 bytes per parameter). For a 70B model:
 
 $$70 \times 10^9 \times 2 \text{ bytes} = 140 \text{ GB} = 130.4 \text{ GiB}$$
 
@@ -181,8 +183,8 @@ where $\text{normalize}(\mathbf{v}) = \frac{\mathbf{v}}{\|\mathbf{v}\|_2}$ is L2
 |----------|-------|
 | **Index Type** | `IndexFlatIP` (Flat Inner Product) |
 | **Dimensionality** | 384 |
-| **Number of Vectors** | ~1,815 |
-| **Index Size on Disk** | ~2.7 MB |
+| **Number of Vectors** | ~1,996 |
+| **Index Size on Disk** | ~3.1 MB |
 | **Search Complexity** | $O(n \cdot d)$ per query |
 | **Distance Metric** | Inner Product (equivalent to cosine similarity for normalized vectors) |
 
@@ -212,7 +214,7 @@ User Query: "code generation python"
 
 **Memory Layout**: The FAISS flat index stores all vectors contiguously:
 
-$$\text{Memory} = n \times d \times 4 \text{ bytes} = 1815 \times 384 \times 4 = 2.79 \text{ MB}$$
+$$\text{Memory} = n \times d \times 4 \text{ bytes} = 1996 \times 384 \times 4 = 3.07 \text{ MB}$$
 
 This fits entirely in L2 cache on modern CPUs, making brute-force search highly efficient at this scale.
 
@@ -268,7 +270,9 @@ Where:
 
 For a model with $P$ billion parameters at precision $p$:
 
-$$\text{VRAM}_{\text{base}} = P \times \text{bytes\_per\_param}(p)$$
+$$\text{VRAM}_{\text{base}} = P \times B(p)$$
+
+where $B(p)$ is the number of bytes per parameter for precision $p$.
 
 | Precision | Bytes/Param | Formula |
 |-----------|:-----------:|---------|
@@ -284,7 +288,9 @@ $$\text{VRAM}_{\text{base}} = P \times \text{bytes\_per\_param}(p)$$
 | `extended_128k` | 1.5× | Intelligence Index ≥ 90 or "128k" in name |
 | `ultra_1m` | 2.0× | "1m" or "200k" in model name |
 
-$$\text{VRAM}_{\text{total}} = \text{VRAM}_{\text{base}} \times \text{multiplier}(\text{context\_tier})$$
+$$\text{VRAM}_{\text{total}} = \text{VRAM}_{\text{base}} \times M(\text{context-tier})$$
+
+where $M(\text{context-tier})$ is the context multiplier.
 
 ---
 
@@ -506,7 +512,7 @@ The FastAPI backend serves both:
 | Component | Operation | Complexity | Notes |
 |-----------|-----------|:----------:|-------|
 | **Use case detection** | Keyword scan | $O(c \cdot k)$ | $c$ = categories, $k$ = keywords per category |
-| **VRAM filter** | Linear scan over models | $O(n)$ | $n$ = 1,815 models, 1 comparison per model |
+| **VRAM filter** | Linear scan over models | $O(n)$ | $n$ = 1,996 models, 1 comparison per model |
 | **Semantic search** | FAISS brute-force IP | $O(n \cdot d)$ | $d = 384$, ~696K multiply-add ops |
 | **Benchmark scoring** | 4 multiplications per model | $O(n)$ | Constant-time per model |
 | **Hardware scoring** | 3 comparisons per model | $O(n)$ | Step function evaluation |
@@ -515,13 +521,13 @@ The FastAPI backend serves both:
 | **SVD prediction** (hybrid) | Matrix-vector product | $O(k \cdot m)$ | $k$ = 50 factors, $m$ = candidate models |
 | **Total** | | $O(n \cdot d + n \log n)$ | Dominated by FAISS search |
 
-For $n = 1{,}815$ and $d = 384$: approximately **700K FLOPs** for FAISS + **20K comparisons** for sorting. End-to-end latency: **~50-200ms** per request.
+For $n = 1{,}996$ and $d = 384$: approximately **766K FLOPs** for FAISS + **22K comparisons** for sorting. End-to-end latency: **~50-200ms** per request.
 
 ### 12.2 Index Build Complexity
 
 | Operation | Complexity | Time |
 |-----------|:----------:|------|
-| Text encoding (MiniLM) | $O(n \cdot L)$ | ~30s for 1,815 models |
+| Text encoding (MiniLM) | $O(n \cdot L)$ | ~30s for 1,996 models |
 | FAISS index construction | $O(n \cdot d)$ | ~10ms (flat index = just copy) |
 | SVD factorization | $O(\min(n_u, n_m) \cdot k^2)$ | ~100ms |
 
@@ -529,9 +535,9 @@ For $n = 1{,}815$ and $d = 384$: approximately **700K FLOPs** for FAISS + **20K 
 
 | Data Structure | Size | Storage |
 |---------------|------|---------|
-| Model database (JSONL) | 1,815 records | ~9.5 MB |
-| FAISS index (384-d, flat) | 1,815 × 384 × 4 bytes | 2.7 MB |
-| Model metadata (JSON) | model_ids + texts | ~270 KB |
+| Model database (JSONL) | 1,996 records | ~10.0 MB |
+| FAISS index (384-d, flat) | 1,996 × 384 × 4 bytes | 3.1 MB |
+| Model metadata (JSON) | `model_ids` + `model_texts` | ~270 KB |
 | SVD factors ($U$, $\Sigma$, $V^T$) | ~45K floats × 8 bytes | ~350 KB |
 | Total in-memory | | ~13 MB |
 
@@ -575,7 +581,7 @@ w_math = weights["math"]
 # ... used directly in loop
 ```
 
-Python dict lookups are ~60ns each. Over 1,815 models × 4 lookups = ~0.44ms saved. Small but clean.
+Python dict lookups are ~60ns each. Over 1,996 models × 4 lookups = ~0.48ms saved. Small but clean.
 
 ### 13.3 Collaborative Filter — Vectorized Prediction
 
@@ -605,7 +611,148 @@ cf_component = np.dot(user_vector, self.Vt[:, model_idx])  # O(k) per model
 
 ---
 
-## Summary
+## 14. Pipeline Operations & CLI Reference
+
+### 14.1 Quick Start
+```bash
+# Setup
+cd data_gathering_pipeline
+python -m venv .venv
+.\.venv\Scripts\activate  # Windows
+pip install -r requirements.txt
+
+# Run
+python main.py                    # Full pipeline (~5-8 min)
+python main.py --hf-only          # Fast mode (HF dataset only, no OpenCompass)
+python main.py --scrape-only      # Scrape OpenCompass to cache
+python main.py --merge-only       # Merge using cached data
+python main.py --report           # Report from existing JSONL
+```
+
+### 14.2 CLI Command Options
+```bash
+python main.py                    # Run full pipeline
+python main.py --hf-only          # HF dataset only (skip OpenCompass, ~30s)
+python main.py --scrape-only      # Only scrape OpenCompass (cache to disk)
+python main.py --merge-only       # Merge using cached data (no scraping)
+python main.py --report           # Report from existing JSONL
+python main.py --visible          # Show browser during OpenCompass scraping
+python main.py --output ./custom.jsonl   # Custom output path
+python analyze_data.py            # Analyze data quality / NaN rates
+```
+
+### 14.3 Output Schema
+The processed data exported to `master_model_db.jsonl` contains the following fields per record:
+```json
+{
+  "model_id": "Qwen2.5-72B-Instruct",
+  "hf_repo_id": "Qwen/Qwen2.5-72B-Instruct",
+  "base_model": "Qwen/Qwen2.5-72B",
+  "model_type": "💬 chat models (RLHF, DPO, IFT, ...)",
+  "architecture": "Qwen2ForCausalLM",
+  "precision": "bfloat16",
+  "params_billions": 72.0,
+  "safetensors_size_gb": 144.0,
+  "benchmarks": {
+    "coding": 88.2,
+    "math": 91.4,
+    "reasoning": 76.3,
+    "elo": null,
+    "intelligence_index": 45.8
+  },
+  "extended_benchmarks": {
+    "humaneval": 88.2,
+    "math_level5": 91.4,
+    "mmlu_pro": 76.3,
+    "big_bench_hard": 73.1
+  },
+  "is_moe": false,
+  "num_experts": null,
+  "license": "apache-2.0",
+  "hub_likes": 3200,
+  "generation": 1,
+  "vram_gb": {
+    "fp16": 172.8,
+    "int8": 86.4,
+    "int4": 43.2,
+    "model_base_gb": 144.0
+  },
+  "hardware_fit": {
+    "gpu_id": "a100_80gb",
+    "gpu_name": "A100 80GB",
+    "gpu_count": 4,
+    "total_vram_gb": 320,
+    "status": "Compatible",
+    "is_moe_model": false,
+    "hosting_strategy": "TP-Sharded",
+    "context_overhead_tier": "extended_128k",
+    "tier": "data_center"
+  },
+  "hosting_strategy": "TP-Sharded",
+  "source_status": "verified",
+  "all_gpu_compatibility": {},
+  "_sources": ["open_llm_leaderboard"],
+  "_variant_count": 3
+}
+```
+
+### 14.4 Pipeline Troubleshooting
+| Issue | Cause | Solution |
+|---|---|---|
+| HF Hub 403/401 | Unauthenticated queries | Set environment variable `HF_TOKEN` |
+| ChromeDriver Crash | Outdated browser driver | Run `pip install --upgrade webdriver-manager` |
+| Empty OpenCompass records | Scraping page loading timeout | Check `logs/` for exceptions; run with `--visible` |
+| Missing OpenCompass cache | Running `--merge-only` directly | Execute `python main.py --scrape-only` first |
+
+---
+
+## 15. Frequently Asked Questions (FAQ)
+
+### 15.1 Why does the system use 384-dimensional embeddings?
+We use `all-MiniLM-L6-v2` because it sits at the optimal Pareto frontier for real-time recommender latency and memory footprint:
+1. **Cache Locality**: A 384-dim float32 vector takes only $1.536 \text{ KB}$. The entire database index (~1,996 models) is **3.1 MB**, fitting completely inside the CPU L2/L3 cache, which prevents main memory access bottlenecks.
+2. **Speed**: Cosine similarity is $O(d)$ where $d$ is the dimensionality. 384-dim inner products are twice as fast as 768-dim models (like MPNet) and four times faster than LLM API embeddings (like OpenAI text-embedding-3-small at 1536-dim).
+3. **Distillation Efficiency**: It retains ~99% of BERT-base retrieval performance on downstream tasks while running up to **10x faster** on CPU.
+
+### 15.2 How is the FAISS index constructed?
+The index is built as a Flat Inner Product index (`IndexFlatIP`) using the following steps:
+1. Each model's structural fields (`model_name`, `base_model`, `model_type`, `architecture`) are joined into a text representation string.
+2. The sentence transformer encodes this text into a 384-dim vector.
+3. Every vector is L2-normalized: $\mathbf{e}_i = \frac{\mathbf{v}_i}{\|\mathbf{v}_i\|_2}$ (ensuring all vectors reside on a unit hypersphere).
+4. Normalized vectors are copied into a contiguous $N \times 384$ block of memory.
+5. Inner products between normalized query vectors and stored vectors correspond exactly to cosine similarities, avoiding expensive norm calculations at search time.
+
+### 15.3 How does our scoring algorithm differ from basic vector space cosine similarity?
+Basic cosine similarity is search-only and lacks contextual awareness. Our system builds on top of it by combining:
+1. **Hard Physical Constraints (VRAM)**: A model is disqualified ($S_{\text{hw}} = 0$) if it exceeds the user's available hardware capacity, whereas simple similarity search might rank a massive model high based on text match alone.
+2. **Objective Capabilities (Benchmarks)**: Cosine similarity cannot tell if a model is functionally capable. We blend semantic search with use-case weighted benchmark scores (e.g., heavily weighting HumanEval for coding tasks).
+3. **Personalization (SVD)**: By blending content scores with truncated SVD rating predictions, the system adapts to historical user preferences, rather than treating every user with the same query identically.
+
+### 15.4 Are we using all the mentioned data sources, or only Hugging Face?
+The pipeline code is fully written to merge Hugging Face leaderboard data with scraped general and academic OpenCompass leaderboards. However, in the current database run, OpenCompass scraping was skipped or had no cached files (showing 0 multi-source models). Thus, the current database values are derived from Hugging Face Open LLM Leaderboard entries, which also matches the 0% OpenCompass coverage documented in the active `DATA_QUALITY.md`.
+
+### 15.5 What are we logging to Weights & Biases, and how does it benefit us?
+We log:
+1. **Query Inputs**: The raw query and the detected use case.
+2. **Hardware Constraints**: Available GPUs and VRAM.
+3. **Recommender State**: Number of compatible models, latency in milliseconds, recommended model ID, and its final composite score.
+4. **Configuration Parameters**: Weights ($w_{\text{sem}}, w_{\text{bench}}, w_{\text{hw}}$) and embedding models.
+5. **API Tests**: Results of test cases for verification.
+
+**Benefits**:
+* **Performance Monitoring**: Tracks latency over time to catch regressions.
+* **Auditability & Alignment**: Verifies if user queries about specific domains (e.g., "python helper") are correctly mapping to appropriate models (e.g., Qwen-Coder).
+* **Demand Analytics**: Reveals which hardware setups are most common, helping us prioritize support or quantization profiles.
+
+### 15.6 What else could we log to Weights & Biases?
+To further optimize the data science workflow, we could add:
+1. **User Feedback Ratings**: Logging actual user ratings (1-5) and computing real-time Mean Squared Error (MSE) of our SVD predictions compared to actual ratings.
+2. **SVD Model Training Metrics**: Sparse matrix density, singular value spectrum decay, and SVD training latency.
+3. **Data Quality Reports**: Logging database fill rates, deduplication statistics, and counts of verified vs estimated sizes during pipeline execution.
+
+---
+
+## 16. Summary
 
 This project implements a **complete end-to-end data science workflow** for recommending locally-hostable open-weight LLMs. The key mathematical pillars are:
 
@@ -614,4 +761,4 @@ This project implements a **complete end-to-end data science workflow** for reco
 3. **Weighted Linear Scoring** ($S = w_1 s_1 + w_2 s_2 + w_3 s_3$, convex combination)
 4. **Hybrid Blending** ($S_{\text{hybrid}} = \alpha \cdot \text{CF} + (1-\alpha) \cdot \text{Content}$, adaptive interpolation)
 
-The system handles **1,815 models** with **sub-200ms** recommendation latency, making it suitable for real-time interactive use.
+The system handles **1,996 models** with **sub-200ms** recommendation latency, making it suitable for real-time interactive use.
