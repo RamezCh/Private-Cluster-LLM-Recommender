@@ -9,3 +9,4 @@ Please refer directly to the following sections in the main walkthrough:
 * **Output Record Schema**: [Section 14.3 (Output Schema)](../walkthrough.md#143-output-schema)
 * **Troubleshooting Guide**: [Section 14.4 (Pipeline Troubleshooting)](../walkthrough.md#144-pipeline-troubleshooting)
 * **Data Quality Metrics**: [Section 4 (Data Quality)](../walkthrough.md#4-data-quality)
+* **System Evaluation**: [Section 9.3 (System Evaluation)](../walkthrough.md#93-system-evaluation-recallk--ndcgk)

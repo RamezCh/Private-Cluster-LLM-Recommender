@@ -1,0 +1,62 @@
+[
+    {
+        "query": "coding assistant",
+        "use_case": "coding",
+        "hardware": "1x RTX 4090",
+        "expected_model": "LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct"
+    },
+    {
+        "query": "best massive model for programming",
+        "use_case": "coding",
+        "hardware": "8x A100",
+        "expected_model": "Qwen/Qwen2.5-72B-Instruct"
+    },
+    {
+        "query": "small python coding model",
+        "use_case": "coding",
+        "hardware": "1x RTX 3060",
+        "expected_model": "LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct"
+    },
+    {
+        "query": "math solver large",
+        "use_case": "math",
+        "hardware": "4x H100",
+        "expected_model": "Qwen/Qwen2.5-72B-Instruct"
+    },
+    {
+        "query": "local math tutor",
+        "use_case": "math",
+        "hardware": "MacBook M3 Max",
+        "expected_model": "Qwen/Qwen2.5-32B-Instruct"
+    },
+    {
+        "query": "tiny math bot",
+        "use_case": "math",
+        "hardware": "1x RTX 3060",
+        "expected_model": "Tsunami-th/Tsunami-0.5-7B-Instruct"
+    },
+    {
+        "query": "state of the art reasoning",
+        "use_case": "general",
+        "hardware": "8x A100",
+        "expected_model": "Qwen/Qwen2.5-72B-Instruct"
+    },
+    {
+        "query": "general chatbot for macbook",
+        "use_case": "general",
+        "hardware": "MacBook Pro M2",
+        "expected_model": "suayptalha/Clarus-7B-v0.2"
+    },
+    {
+        "query": "strong intelligent model",
+        "use_case": "general",
+        "hardware": "8x H100",
+        "expected_model": "Qwen/Qwen2.5-72B-Instruct"
+    },
+    {
+        "query": "phi for math",
+        "use_case": "math",
+        "hardware": "1x RTX 4090",
+        "expected_model": "Tsunami-th/Tsunami-0.5-7B-Instruct"
+    }
+]

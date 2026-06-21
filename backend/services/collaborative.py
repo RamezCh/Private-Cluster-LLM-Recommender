@@ -60,6 +60,12 @@ class CollaborativeFilter:
     
     def _build_matrix(self, records: list[dict]) -> tuple[sparse.csr_matrix, np.ndarray]:
         """Build user-item rating matrix."""
+        # Dedup records: keep latest rating for each user-model pair
+        deduped = {}
+        for r in records:
+            deduped[(r["user_id"], r["model_id"])] = r
+        records = list(deduped.values())
+        
         n_users = len(self.user_to_idx)
         n_models = len(self.model_to_idx)
         

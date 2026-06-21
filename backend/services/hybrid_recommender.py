@@ -84,10 +84,9 @@ class HybridRecommender:
         
         values = [pred[0] for pred in predictions.values()]
         
-        if user_has_data:
-            return {mid: (v - 1) / 4 for mid, v in zip(predictions.keys(), values)}
-        else:
-            return {mid: 0.5 for mid in predictions.keys()}
+        # Even if the user has no data, predictions contains the global 
+        # baseline / popularity scores for these models! We should use them.
+        return {mid: (v - 1) / 4 for mid, v in zip(predictions.keys(), values)}
     
     def get_hybrid_recommendations(
         self,

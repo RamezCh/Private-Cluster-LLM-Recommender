@@ -21,13 +21,13 @@ from config.config import (
 logger = get_logger(__name__)
 
 
-def _determine_quant(model_vram: float, total_vram: float) -> str:
+def _determine_quant(model_base_gb: float, total_vram: float) -> str:
     from config.config import VRAM_MULTIPLIERS as VM
-    if total_vram >= model_vram * VM["fp16"]:
+    if total_vram >= model_base_gb * VM["fp16"]:
         return "FP16"
-    if total_vram >= model_vram * VM["int8"]:
+    if total_vram >= model_base_gb * VM["int8"]:
         return "INT8"
-    if total_vram >= model_vram * VM["int4"]:
+    if total_vram >= model_base_gb * VM["int4"]:
         return "INT4"
     return "Insufficient"
 
@@ -115,8 +115,10 @@ class LLMRecommender:
 
     def _hw_info(self, model: dict, hw: ParsedHardware) -> dict:
         total_vram = hw.total_vram_gb
-        vram_fp16 = model.get("vram_gb", {}).get("fp16", 0)
-        quant = _determine_quant(vram_fp16, total_vram)
+        vram_gb = model.get("vram_gb", {})
+        vram_fp16 = vram_gb.get("fp16", 0)
+        model_base_gb = vram_gb.get("model_base_gb", vram_fp16 / 1.2 if vram_fp16 else 0)
+        quant = _determine_quant(model_base_gb, total_vram)
 
         if quant == "FP16":
             return {
@@ -164,14 +166,14 @@ class LLMRecommender:
 
         total_vram = hardware.total_vram_gb
 
-        # Pre-compute VRAM threshold: minimum FP16 VRAM a model can have
+        # Pre-compute VRAM threshold: minimum base VRAM a model can have
         # to fit at INT4 quantization (the loosest fit)
         from config.config import VRAM_MULTIPLIERS as VM
-        max_fp16_for_int4 = total_vram / VM["int4"]  # models with fp16 <= this threshold fit
+        max_base_for_int4 = total_vram / VM["int4"]  # models with base_gb <= this threshold fit
 
         compatible = [
             m for m in self.models
-            if (m.get("vram_gb", {}).get("fp16", 0) or 0) <= max_fp16_for_int4
+            if (m.get("vram_gb", {}).get("model_base_gb") or m.get("vram_gb", {}).get("fp16", 0) / 1.2) <= max_base_for_int4
         ]
 
         if not compatible:
@@ -267,7 +269,7 @@ class LLMRecommender:
             {
                 "category": "laptop",
                 "label": "Works on your laptop",
-                "hardware_text": "MacBook Pro M3 Max",
+                "hardware_text": "Laptop RTX 4070",
             },
             {
                 "category": "consumer",

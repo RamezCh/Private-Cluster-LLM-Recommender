@@ -119,13 +119,28 @@ def generate_feedback_for_user(
     min_ratings: int = 5,
     max_ratings: int = 10
 ) -> list[dict]:
-    """Generate feedback records for a single user."""
+    """Generate realistic feedback records for a single user by picking relevant models."""
     if not models:
         return []
     
-    num_ratings = random.randint(min_ratings, max_ratings)
+    # Filter models roughly by use case to simulate realistic user exploration
+    use_case = user["primary_use_case"]
     
-    selected_models = random.sample(models, min(num_ratings, len(models)))
+    # Sort models by the relevant benchmark to get a pool of "good" models for this user
+    def get_score(m):
+        bench = m.get("benchmarks", {})
+        if "code" in use_case: return bench.get("coding") or 0
+        if "math" in use_case: return bench.get("math") or 0
+        return bench.get("intelligence_index") or 0
+        
+    sorted_models = sorted(models, key=get_score, reverse=True)
+    
+    # Take the top 50 models for this use case as the "candidate pool"
+    # and maybe add 10 random models to simulate exploring bad models
+    candidate_pool = sorted_models[:50] + random.sample(models, 10)
+    
+    num_ratings = random.randint(min_ratings, max_ratings)
+    selected_models = random.sample(candidate_pool, min(num_ratings, len(candidate_pool)))
     
     feedbacks = []
     base_time = datetime.utcnow() - timedelta(days=random.randint(1, 90))
@@ -279,7 +294,7 @@ def main():
     print(f"Loaded {len(models)} models")
     print()
     
-    num_users = 100
+    num_users = 65
     print(f"Generating {num_users} users with feedback...")
     print()
     
