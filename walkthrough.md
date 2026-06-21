@@ -94,6 +94,9 @@ The system has **four major layers**:
 | OpenCompass General | Selenium WebDriver + explicit waits | ~200–400 models | `opencompass.py` |
 | OpenCompass Academic | Selenium WebDriver + explicit waits | ~100–200 models | `opencompass.py` |
 
+> [!CAUTION]
+> **Scraping Disclaimer**: The OpenCompass Selenium scrapers were developed and executed strictly once for **educational purposes** to demonstrate headless browser automation. The scraped OpenCompass records were ultimately deprecated and dropped from the final `master_model_db.jsonl` due to excessively sparse benchmark fill rates, meaning no proprietary data from OpenCompass powers the final engine.
+
 **Pipeline phases** (see `orchestrator.py`):
 
 ```

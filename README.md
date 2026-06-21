@@ -238,3 +238,8 @@ Returns total model count for footer display.
 python generate_fake_feedback.py
 ```
 This generates ~100 users with ~400 feedback ratings in `data_gathering_pipeline/data/feedback_data.jsonl`.
+
+## Disclaimer
+
+> [!CAUTION]
+> **Scraping Disclaimer**: The OpenCompass Selenium scrapers located in this repository were developed and executed strictly once for **educational purposes** to demonstrate headless browser automation. The scraped OpenCompass records were ultimately deprecated and dropped from the final `master_model_db.jsonl` due to sparse benchmark fill rates. No proprietary data from OpenCompass powers the final recommendation engine.
