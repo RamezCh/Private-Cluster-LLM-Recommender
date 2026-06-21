@@ -279,7 +279,7 @@ class LLMRecommender:
             {
                 "category": "data_center",
                 "label": "Data center powerhouse",
-                "hardware_text": "2x A100 40GB",
+                "hardware_text": "2x B200",
             },
         ]
 
