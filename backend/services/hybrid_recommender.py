@@ -27,20 +27,20 @@ class HybridRecommender:
     The hybrid score is calculated as:
         hybrid_score = alpha * norm_cf + (1 - alpha) * content_score
     
-    Where alpha controls the blend between approaches.
+    Where alpha controls the blend between approaches and adapts per-model.
     """
     
     def __init__(
         self,
         alpha: float = 0.6,
-        min_confidence_for_cf: float = 0.3
+        min_confidence_for_cf: float = 0.0  # We use smooth scaling now, no hard cutoff needed
     ):
         """
         Initialize hybrid recommender.
         
         Args:
-            alpha: Weight for collaborative filtering (0.6 = 60% CF, 40% content)
-            min_confidence_for_cf: Minimum CF confidence to consider the prediction
+            alpha: Maximum weight for collaborative filtering (0.6 = 60% CF max)
+            min_confidence_for_cf: Legacy threshold, no longer heavily used due to smooth alpha
         """
         self.alpha = alpha
         self.min_confidence = min_confidence_for_cf
@@ -75,18 +75,13 @@ class HybridRecommender:
     
     def _normalize_cf_predictions(
         self,
-        predictions: dict[str, tuple[float, float]],
-        user_has_data: bool
+        predictions: dict[str, tuple[float, float]]
     ) -> dict[str, float]:
         """Normalize CF predictions to 0-1 range (1-5 scale to 0-1)."""
         if not predictions:
             return {}
         
-        values = [pred[0] for pred in predictions.values()]
-        
-        # Even if the user has no data, predictions contains the global 
-        # baseline / popularity scores for these models! We should use them.
-        return {mid: (v - 1) / 4 for mid, v in zip(predictions.keys(), values)}
+        return {mid: (val[0] - 1) / 4 for mid, val in predictions.items()}
     
     def get_hybrid_recommendations(
         self,
@@ -123,31 +118,29 @@ class HybridRecommender:
         model_ids = [m.model_id for m in content_models]
         norm_content = self._normalize_content_scores(content_models)
         
-        user_has_data = user_id and self.collaborative_filter.has_user_data(user_id)
         cf_predictions = {}
-        
         if user_id and self.collaborative_filter.total_ratings > 0:
             cf_predictions = self.collaborative_filter.get_user_predictions(
                 user_id, model_ids, exclude_rated=False
             )
         
-        norm_cf = self._normalize_cf_predictions(cf_predictions, user_has_data)
-        
-        if user_has_data:
-            alpha = self.alpha
-        elif len(cf_predictions) > 0:
-            avg_confidence = np.mean([p[1] for p in cf_predictions.values()])
-            alpha = self.alpha * avg_confidence
-        else:
-            alpha = 0.0
+        norm_cf = self._normalize_cf_predictions(cf_predictions)
         
         hybrid_scores = {}
+        blend_weights = {}
+        
         for model_id in model_ids:
             content_score = norm_content.get(model_id, 0.5)
             cf_score = norm_cf.get(model_id, 0.5)
+            cf_pred, cf_conf = cf_predictions.get(model_id, (None, 0.0))
             
-            hybrid = alpha * cf_score + (1 - alpha) * content_score
+            # Adaptive per-model alpha: scales smoothly with CF confidence
+            # High confidence = use full self.alpha. Zero confidence = 100% content.
+            model_alpha = self.alpha * cf_conf
+            
+            hybrid = model_alpha * cf_score + (1 - model_alpha) * content_score
             hybrid_scores[model_id] = hybrid
+            blend_weights[model_id] = model_alpha
         
         model_map = {m.model_id: m for m in content_models}
         ranked_ids = sorted(model_ids, key=lambda x: hybrid_scores[x], reverse=True)
@@ -155,7 +148,7 @@ class HybridRecommender:
         results = []
         for model_id in ranked_ids[:top_k]:
             original = model_map[model_id]
-            cf_pred, cf_conf = cf_predictions.get(model_id, (None, None))
+            cf_pred, cf_conf = cf_predictions.get(model_id, (None, 0.0))
             
             hybrid_model = HybridScoredModel(
                 model_id=original.model_id,
@@ -182,7 +175,7 @@ class HybridRecommender:
                 cf_prediction=cf_pred,
                 cf_confidence=cf_conf,
                 hybrid_score=hybrid_scores[model_id],
-                blend_weight=alpha if user_has_data else None,
+                blend_weight=blend_weights[model_id],
             )
             results.append(hybrid_model)
         

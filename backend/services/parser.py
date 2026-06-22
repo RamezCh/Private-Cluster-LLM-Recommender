@@ -1,5 +1,6 @@
-"""Hardware parsing and use case detection. Single service for both."""
+"""Hardware parsing, use case detection, and scoring. Single service for both."""
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -9,8 +10,13 @@ from config.config import (
     GPU_NAME_MAPPINGS,
     GPU_DISPLAY_NAMES,
     USE_CASE_KEYWORDS,
+    USE_CASE_BENCHMARK_WEIGHTS,
     DEFAULT_USE_CASE,
     VRAM_MULTIPLIERS,
+    KV_CACHE_RESERVE,
+    OPTIMAL_VRAM_UTILIZATION,
+    VRAM_UTILIZATION_SIGMA,
+    QUANT_BONUSES,
 )
 
 
@@ -89,20 +95,57 @@ def get_available_gpu_options():
     return GPU_DISPLAY_NAMES
 
 
-def detect_use_case(text: str) -> tuple[str, list[str]]:
+def detect_use_case(text: str) -> tuple[str, dict[str, float]]:
+    """Multi-label use case detection with proportional keyword weights.
+
+    Scans the query for ALL matching keywords across every use-case category
+    and returns proportional weights based on keyword hit density.
+
+    Returns:
+        tuple: (primary_use_case, proportions_dict)
+        proportions_dict maps each matched use_case to its proportion (sums to 1.0).
+    """
     text_lower = text.lower()
-    matched = []
+    hits: dict[str, int] = {}
+
     for use_case, keywords in USE_CASE_KEYWORDS.items():
         if use_case == "general":
             continue
-        for kw in keywords:
-            if kw in text_lower:
-                if use_case not in matched:
-                    matched.append(use_case)
-                break
-    if not matched:
-        return DEFAULT_USE_CASE, []
-    return matched[0], matched
+        count = sum(1 for kw in keywords if kw in text_lower)
+        if count > 0:
+            hits[use_case] = count
+
+    if not hits:
+        return DEFAULT_USE_CASE, {"general": 1.0}
+
+    total_hits = sum(hits.values())
+    proportions = {uc: count / total_hits for uc, count in hits.items()}
+    primary = max(hits, key=hits.get)
+
+    return primary, proportions
+
+
+def blend_benchmark_weights(proportions: dict[str, float]) -> dict[str, float]:
+    """Blend per-use-case benchmark weight vectors by multi-label proportions.
+
+    When multiple use cases are detected (e.g. "write a Python math solver"
+    matches both coding and math), this creates a weighted average of their
+    respective benchmark weight vectors.
+
+    Args:
+        proportions: {use_case: proportion} from detect_use_case(), sums to 1.0.
+
+    Returns:
+        Blended weights dict with keys: coding, math, reasoning, intelligence_index.
+    """
+    blended = {"coding": 0.0, "math": 0.0, "reasoning": 0.0, "intelligence_index": 0.0}
+
+    for uc, proportion in proportions.items():
+        uc_weights = USE_CASE_BENCHMARK_WEIGHTS.get(uc, USE_CASE_BENCHMARK_WEIGHTS["general"])
+        for key in blended:
+            blended[key] += proportion * uc_weights[key]
+
+    return blended
 
 
 def get_primary_use_case(text: str) -> str:
@@ -122,18 +165,59 @@ def determine_quantization(model_vram: float, total_vram: float) -> str:
 
 def calculate_benchmark_score(coding: float, math: float, reasoning: float,
                                intelligence_index: float, use_case: str) -> float:
-    from config.config import USE_CASE_BENCHMARK_WEIGHTS
+    """Calculate benchmark score using raw values (legacy interface).
+
+    Note: The recommender now uses percentile-rank normalization internally.
+    This function is preserved for standalone/test use with the original formula.
+    """
     w = USE_CASE_BENCHMARK_WEIGHTS.get(use_case, USE_CASE_BENCHMARK_WEIGHTS["general"])
     score = (w["coding"] * (coding or 0) + w["math"] * (math or 0) +
              w["reasoning"] * (reasoning or 0) + w["intelligence_index"] * (intelligence_index or 0))
     return score / 100.0
 
 
-def calculate_hardware_score(model_vram: float, user_total_vram: float) -> float:
-    if user_total_vram >= model_vram * VRAM_MULTIPLIERS["fp16"]:
-        return 1.0
-    if user_total_vram >= model_vram * VRAM_MULTIPLIERS["int8"]:
-        return 0.8
-    if user_total_vram >= model_vram * VRAM_MULTIPLIERS["int4"]:
-        return 0.6
-    return 0.0
+def calculate_hardware_score(model_vram_fp16: float, user_total_vram: float) -> float:
+    """Continuous VRAM-aware hardware score with KV-cache reservation.
+
+    Scores models on a smooth Gaussian curve based on how well they utilize
+    the available VRAM after reserving 20% for KV-cache. The peak score is
+    at ~85% of usable VRAM. Models that are too small for the hardware are
+    penalized (low utilization), and models requiring aggressive quantization
+    receive a quality penalty.
+
+    Args:
+        model_vram_fp16: Model's VRAM requirement at FP16 precision (GB).
+        user_total_vram: User's total available VRAM across all GPUs (GB).
+
+    Returns:
+        Score in [0.0, 1.0] where higher means better VRAM utilization.
+    """
+    if user_total_vram <= 0 or model_vram_fp16 <= 0:
+        return 0.0
+
+    usable_vram = user_total_vram * (1 - KV_CACHE_RESERVE)
+
+    # Determine best quantization that fits and effective VRAM usage
+    # INT8 ≈ 50% of FP16, INT4 ≈ 25% of FP16
+    if model_vram_fp16 <= usable_vram:
+        effective_vram = model_vram_fp16
+        quant_bonus = QUANT_BONUSES["fp16"]
+    elif model_vram_fp16 * 0.5 <= usable_vram:
+        effective_vram = model_vram_fp16 * 0.5
+        quant_bonus = QUANT_BONUSES["int8"]
+    elif model_vram_fp16 * 0.25 <= usable_vram:
+        effective_vram = model_vram_fp16 * 0.25
+        quant_bonus = QUANT_BONUSES["int4"]
+    else:
+        return 0.0
+
+    # Utilization ratio: how much of usable VRAM the model consumes
+    utilization = effective_vram / usable_vram
+
+    # Gaussian bell curve centered at OPTIMAL_VRAM_UTILIZATION
+    util_score = math.exp(
+        -((utilization - OPTIMAL_VRAM_UTILIZATION) ** 2)
+        / (2 * VRAM_UTILIZATION_SIGMA ** 2)
+    )
+
+    return util_score * quant_bonus

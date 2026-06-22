@@ -17,6 +17,15 @@ VRAM_MULTIPLIERS = {
     "int4": 0.3,
 }
 
+# ─── VRAM Efficiency Scoring ──────────────────────────────────────────────────
+KV_CACHE_RESERVE = 0.20           # Reserve 20% of VRAM for KV-cache
+OPTIMAL_VRAM_UTILIZATION = 0.85   # Peak score at ~85% of usable VRAM
+VRAM_UTILIZATION_SIGMA = 0.35     # Gaussian spread for utilization curve
+QUANT_BONUSES = {"fp16": 1.0, "int8": 0.90, "int4": 0.75}
+
+# ─── Benchmark Imputation ─────────────────────────────────────────────────────
+IMPUTATION_K = 5  # Nearest neighbors for missing benchmark imputation
+
 # ─── Scoring Weights ──────────────────────────────────────────────────────────
 SEMANTIC_WEIGHT = 0.30
 BENCHMARK_WEIGHT = 0.50

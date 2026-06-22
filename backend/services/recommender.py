@@ -1,5 +1,6 @@
 """Hybrid LLM recommender engine. Simple, efficient, works."""
 
+import bisect
 import json
 import time
 from dataclasses import dataclass, field
@@ -9,25 +10,28 @@ from typing import Optional
 from backend.logger import get_logger
 from backend.services.parser import (
     ParsedHardware, determine_quantization, calculate_benchmark_score,
-    calculate_hardware_score, detect_use_case, parse_hardware_input
+    calculate_hardware_score, detect_use_case, parse_hardware_input,
+    blend_benchmark_weights,
 )
 from backend.services.embedding_service import get_embedding_service
 from backend.services.wandb_logger import get_wandb_logger
 from config.config import (
     DB_PATH, DEFAULT_USE_CASE, SEMANTIC_WEIGHT, BENCHMARK_WEIGHT, HARDWARE_WEIGHT,
     TOP_K_RECOMMENDATIONS, GPU_CATALOG, USE_CASE_BENCHMARK_WEIGHTS,
+    KV_CACHE_RESERVE, IMPUTATION_K,
 )
 
 logger = get_logger(__name__)
 
 
 def _determine_quant(model_base_gb: float, total_vram: float) -> str:
-    from config.config import VRAM_MULTIPLIERS as VM
-    if total_vram >= model_base_gb * VM["fp16"]:
+    from config.config import VRAM_MULTIPLIERS as VM, KV_CACHE_RESERVE
+    usable = total_vram * (1 - KV_CACHE_RESERVE)
+    if usable >= model_base_gb * VM["fp16"]:
         return "FP16"
-    if total_vram >= model_base_gb * VM["int8"]:
+    if usable >= model_base_gb * VM["int8"]:
         return "INT8"
-    if total_vram >= model_base_gb * VM["int4"]:
+    if usable >= model_base_gb * VM["int4"]:
         return "INT4"
     return "Insufficient"
 
@@ -99,6 +103,8 @@ class LLMRecommender:
         self.benchmark_weight = benchmark_weight
         self.hardware_weight = hardware_weight
         self._wandb = get_wandb_logger()
+        # Percentile rank lookup tables: {field_name: sorted_values_list}
+        self._benchmark_sorted: dict[str, list[float]] = {}
         self._load_models()
 
     def _load_models(self) -> None:
@@ -112,6 +118,102 @@ class LLMRecommender:
                 except json.JSONDecodeError:
                     pass
         logger.info(f"Loaded {len(self.models)} models")
+
+        # Post-load processing: impute missing benchmarks, then build percentile tables
+        self._impute_missing_benchmarks()
+        self._precompute_benchmark_stats()
+
+    # ── Percentile-Rank Normalization ─────────────────────────────────────────
+
+    def _precompute_benchmark_stats(self) -> None:
+        """Build sorted value arrays for O(log n) percentile rank lookups."""
+        fields = ["coding", "math", "reasoning", "intelligence_index"]
+        for fld in fields:
+            values = sorted([
+                m.get("benchmarks", {}).get(fld, 0) or 0
+                for m in self.models
+                if (m.get("benchmarks", {}).get(fld, 0) or 0) > 0
+            ])
+            self._benchmark_sorted[fld] = values
+        logger.info(
+            f"Benchmark percentile tables built: "
+            + ", ".join(f"{f}={len(self._benchmark_sorted[f])}" for f in fields)
+        )
+
+    def _get_percentile_rank(self, field: str, value: float) -> float:
+        """Return the percentile rank of a value within its benchmark dimension.
+
+        Uses binary search on pre-sorted arrays for O(log n) performance.
+        Returns 0.0 for zero/missing values, otherwise a value in (0.0, 1.0].
+        """
+        if value <= 0:
+            return 0.0
+        values = self._benchmark_sorted.get(field, [])
+        if not values:
+            return 0.0
+        pos = bisect.bisect_left(values, value)
+        return pos / len(values)
+
+    # ── k-NN Missing Benchmark Imputation ─────────────────────────────────────
+
+    def _impute_missing_benchmarks(self) -> None:
+        """Fill in missing benchmark values using distance-weighted k-NN.
+
+        For each model with a missing benchmark (value=0), finds the K most
+        similar models (based on Euclidean distance over the non-missing
+        benchmarks) and imputes the missing value as a distance-weighted average
+        of the neighbors' values.
+        """
+        fields = ["coding", "math", "reasoning", "intelligence_index"]
+        imputed_count = 0
+
+        for model in self.models:
+            benchmarks = model.get("benchmarks", {})
+            missing = [f for f in fields if not (benchmarks.get(f) or 0)]
+            present = [f for f in fields if (benchmarks.get(f) or 0)]
+
+            if not missing or not present:
+                continue
+
+            model_vec = [benchmarks.get(f, 0) for f in present]
+
+            # Find neighbors that have all required fields populated
+            neighbors: list[tuple[float, dict]] = []
+            for other in self.models:
+                if other is model:
+                    continue
+                other_bench = other.get("benchmarks", {})
+                if not all(other_bench.get(f) for f in missing):
+                    continue
+                if not all(other_bench.get(f) for f in present):
+                    continue
+
+                other_vec = [other_bench.get(f, 0) for f in present]
+                dist = sum((a - b) ** 2 for a, b in zip(model_vec, other_vec)) ** 0.5
+                neighbors.append((dist, other))
+
+            if not neighbors:
+                continue
+
+            neighbors.sort(key=lambda x: x[0])
+            k = min(IMPUTATION_K, len(neighbors))
+
+            for f in missing:
+                total_weight = 0.0
+                weighted_sum = 0.0
+                for dist, neighbor in neighbors[:k]:
+                    w = 1.0 / (dist + 1e-6)  # inverse-distance weighting
+                    weighted_sum += w * (neighbor.get("benchmarks", {}).get(f, 0) or 0)
+                    total_weight += w
+
+                imputed_value = weighted_sum / total_weight if total_weight > 0 else 0
+                benchmarks[f] = imputed_value
+                imputed_count += 1
+
+        if imputed_count > 0:
+            logger.info(f"Imputed {imputed_count} missing benchmark values via k-NN (k={IMPUTATION_K})")
+
+    # ── Hardware Display Info ─────────────────────────────────────────────────
 
     def _hw_info(self, model: dict, hw: ParsedHardware) -> dict:
         total_vram = hw.total_vram_gb
@@ -147,6 +249,8 @@ class LLMRecommender:
         return {"status": "Insufficient VRAM", "quantization": "N/A",
                 "parallelism": "N/A", "strategy": "N/A", "score": 0}
 
+    # ── Main Recommendation Pipeline ──────────────────────────────────────────
+
     def recommend(
         self,
         hardware: ParsedHardware,
@@ -159,21 +263,25 @@ class LLMRecommender:
         use_case_text = use_case_text[:5000]
         user_query = user_query[:5000]
 
-        use_case, _ = detect_use_case(use_case_text)
+        # Multi-label use case detection: get proportional weights
+        use_case, proportions = detect_use_case(use_case_text)
         if not use_case or use_case == DEFAULT_USE_CASE:
             if use_case_text.strip():
                 use_case = DEFAULT_USE_CASE
 
+        # Blend benchmark weights across all matched use cases
+        blended = blend_benchmark_weights(proportions)
+
         total_vram = hardware.total_vram_gb
 
-        # Pre-compute VRAM threshold: minimum base VRAM a model can have
-        # to fit at INT4 quantization (the loosest fit)
-        from config.config import VRAM_MULTIPLIERS as VM
-        max_base_for_int4 = total_vram / VM["int4"]  # models with base_gb <= this threshold fit
+        # Pre-filter: only models that fit at INT4 within usable VRAM
+        usable_vram = total_vram * (1 - KV_CACHE_RESERVE)
+        # Model fits at INT4 if vram_fp16 * 0.25 <= usable_vram
+        max_fp16_for_int4 = usable_vram / 0.25
 
         compatible = [
             m for m in self.models
-            if (m.get("vram_gb", {}).get("model_base_gb") or m.get("vram_gb", {}).get("fp16", 0) / 1.2) <= max_base_for_int4
+            if (m.get("vram_gb", {}).get("fp16", 0) or 0) <= max_fp16_for_int4
         ]
 
         if not compatible:
@@ -187,11 +295,10 @@ class LLMRecommender:
             for mid, score in emb_svc.search(user_query, top_k=100):
                 sem_results[mid] = score
 
-        weights = USE_CASE_BENCHMARK_WEIGHTS.get(use_case, USE_CASE_BENCHMARK_WEIGHTS["general"])
-        w_coding = weights["coding"]
-        w_math = weights["math"]
-        w_reasoning = weights["reasoning"]
-        w_ii = weights["intelligence_index"]
+        w_coding = blended["coding"]
+        w_math = blended["math"]
+        w_reasoning = blended["reasoning"]
+        w_ii = blended["intelligence_index"]
         sw, bw, hw_w = self.semantic_weight, self.benchmark_weight, self.hardware_weight
 
         scored = []
@@ -204,10 +311,19 @@ class LLMRecommender:
             m = bmarks.get("math", 0) or 0
             r = bmarks.get("reasoning", 0) or 0
             ii = bmarks.get("intelligence_index", 0) or 0
-            bm_score = (w_coding * c + w_math * m + w_reasoning * r + w_ii * ii) / 100.0
 
-            vram_gb = model.get("vram_gb", {})
-            vram_fp16 = vram_gb.get("fp16", 0)
+            # Percentile-rank normalization: convert raw scores to their
+            # position within the population distribution (0.0 to 1.0)
+            c_pct = self._get_percentile_rank("coding", c)
+            m_pct = self._get_percentile_rank("math", m)
+            r_pct = self._get_percentile_rank("reasoning", r)
+            ii_pct = self._get_percentile_rank("intelligence_index", ii)
+
+            # Weighted benchmark score using blended multi-label weights
+            bm_score = w_coding * c_pct + w_math * m_pct + w_reasoning * r_pct + w_ii * ii_pct
+
+            # Continuous hardware score with KV-cache-aware VRAM utilization
+            vram_fp16 = model.get("vram_gb", {}).get("fp16", 0) or 0
             hw_score = calculate_hardware_score(vram_fp16, total_vram)
 
             final = sw * sem_score + bw * bm_score + hw_w * hw_score
@@ -225,8 +341,8 @@ class LLMRecommender:
                 intelligence_index=ii,
                 safetensors_size_gb=model.get("safetensors_size_gb") or 0,
                 vram_fp16=vram_fp16,
-                vram_int8=vram_gb.get("int8", 0),
-                vram_int4=vram_gb.get("int4", 0),
+                vram_int8=model.get("vram_gb", {}).get("int8", 0),
+                vram_int4=model.get("vram_gb", {}).get("int4", 0),
                 hosting_strategy=model.get("hosting_strategy", "unknown"),
                 is_moe=model.get("is_moe", False),
                 semantic_score=sem_score,
