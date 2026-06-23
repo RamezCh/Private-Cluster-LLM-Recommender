@@ -11,7 +11,7 @@ from scipy.sparse.linalg import svds
 class CollaborativeFilter:
     """SVD-based collaborative filter for rating predictions."""
     
-    def __init__(self, feedback_path: Path, n_factors: int = 50, min_ratings: int = 1):
+    def __init__(self, feedback_path: Path, n_factors: int = 10, min_ratings: int = 1):
         self.feedback_path = feedback_path
         self.n_factors = n_factors
         self.min_ratings = min_ratings
@@ -267,7 +267,7 @@ _cf_instance: Optional[CollaborativeFilter] = None
 
 def get_collaborative_filter(
     feedback_path: Optional[Path] = None,
-    n_factors: int = 50
+    n_factors: int = 10
 ) -> CollaborativeFilter:
     """Get or create the global collaborative filter instance."""
     global _cf_instance

@@ -107,6 +107,11 @@ The system has **four major layers**:
 2. **Missing Values**: Verified that **0 missing values** exist for the benchmarks across all 1,996 records thanks to the successful implementation of the k-NN Imputation pipeline.
 3. **Data Quality File**: Refactored the statistics inside `DATA_QUALITY.md` into a single, unified Markdown table and updated all legacy counts to correctly reflect the `1,996` models we evaluated.
 
+## Collaborative Filtering (SVD) Fine-Tuning
+1. **Cross-Validation**: Implemented an automated SVD Error Curve generator (`generate_svd_curve.py`) to hyperparameter-tune the collaborative filter.
+2. **Choosing `k` (Latent Factors)**: Evaluated 494 user feedback ratings (an exceptionally dense ~11% fill rate) across 5-fold cross-validation. The RMSE error curve dropped steadily until hitting a distinct minimum elbow at `k=10`. Any values higher than 10 caused the model to overfit to noise.
+3. **Implementation**: Updated the production `CollaborativeFilter` service to use `n_factors=10`, optimizing the hybrid engine's personalized recommendations to perfectly match our mathematical findings.
+
 ## Frontend UI Quality of Life
 1. **Unbounded GPU Selection**: The `Num GPUs` field has been opened up; you can now incrementally add GPUs starting from 1, bypassing the rigid drop-down limits.
 2. **No On-Load Highlighting**: The interface no longer highlights use-case chips on startup, remaining neutral until a user takes action.
