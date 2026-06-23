@@ -61,15 +61,8 @@ class HybridRecommender:
         if not models:
             return {}
         
-        scores = [m.final_score for m in models]
-        min_score = min(scores)
-        max_score = max(scores)
-        
-        if max_score - min_score < 0.001:
-            return {m.model_id: 0.5 for m in models}
-        
         return {
-            m.model_id: (m.final_score - min_score) / (max_score - min_score)
+            m.model_id: m.final_score
             for m in models
         }
     

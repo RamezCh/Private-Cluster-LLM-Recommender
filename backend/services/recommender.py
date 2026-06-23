@@ -9,7 +9,7 @@ from typing import Optional
 
 from backend.logger import get_logger
 from backend.services.parser import (
-    ParsedHardware, determine_quantization, calculate_benchmark_score,
+    ParsedHardware, determine_quantization,
     calculate_hardware_score, detect_use_case, parse_hardware_input,
     blend_benchmark_weights,
 )
@@ -17,7 +17,7 @@ from backend.services.embedding_service import get_embedding_service
 from backend.services.wandb_logger import get_wandb_logger
 from config.config import (
     DB_PATH, DEFAULT_USE_CASE, SEMANTIC_WEIGHT, BENCHMARK_WEIGHT, HARDWARE_WEIGHT,
-    TOP_K_RECOMMENDATIONS, GPU_CATALOG, USE_CASE_BENCHMARK_WEIGHTS,
+    TOP_K_RECOMMENDATIONS, GPU_CATALOG,
     KV_CACHE_RESERVE, IMPUTATION_K,
 )
 
@@ -119,8 +119,7 @@ class LLMRecommender:
                     pass
         logger.info(f"Loaded {len(self.models)} models")
 
-        # Post-load processing: impute missing benchmarks, then build percentile tables
-        self._impute_missing_benchmarks()
+        # Post-load processing: build percentile tables
         self._precompute_benchmark_stats()
 
     # ── Percentile-Rank Normalization ─────────────────────────────────────────
@@ -154,64 +153,7 @@ class LLMRecommender:
         pos = bisect.bisect_left(values, value)
         return pos / len(values)
 
-    # ── k-NN Missing Benchmark Imputation ─────────────────────────────────────
 
-    def _impute_missing_benchmarks(self) -> None:
-        """Fill in missing benchmark values using distance-weighted k-NN.
-
-        For each model with a missing benchmark (value=0), finds the K most
-        similar models (based on Euclidean distance over the non-missing
-        benchmarks) and imputes the missing value as a distance-weighted average
-        of the neighbors' values.
-        """
-        fields = ["coding", "math", "reasoning", "intelligence_index"]
-        imputed_count = 0
-
-        for model in self.models:
-            benchmarks = model.get("benchmarks", {})
-            missing = [f for f in fields if not (benchmarks.get(f) or 0)]
-            present = [f for f in fields if (benchmarks.get(f) or 0)]
-
-            if not missing or not present:
-                continue
-
-            model_vec = [benchmarks.get(f, 0) for f in present]
-
-            # Find neighbors that have all required fields populated
-            neighbors: list[tuple[float, dict]] = []
-            for other in self.models:
-                if other is model:
-                    continue
-                other_bench = other.get("benchmarks", {})
-                if not all(other_bench.get(f) for f in missing):
-                    continue
-                if not all(other_bench.get(f) for f in present):
-                    continue
-
-                other_vec = [other_bench.get(f, 0) for f in present]
-                dist = sum((a - b) ** 2 for a, b in zip(model_vec, other_vec)) ** 0.5
-                neighbors.append((dist, other))
-
-            if not neighbors:
-                continue
-
-            neighbors.sort(key=lambda x: x[0])
-            k = min(IMPUTATION_K, len(neighbors))
-
-            for f in missing:
-                total_weight = 0.0
-                weighted_sum = 0.0
-                for dist, neighbor in neighbors[:k]:
-                    w = 1.0 / (dist + 1e-6)  # inverse-distance weighting
-                    weighted_sum += w * (neighbor.get("benchmarks", {}).get(f, 0) or 0)
-                    total_weight += w
-
-                imputed_value = weighted_sum / total_weight if total_weight > 0 else 0
-                benchmarks[f] = imputed_value
-                imputed_count += 1
-
-        if imputed_count > 0:
-            logger.info(f"Imputed {imputed_count} missing benchmark values via k-NN (k={IMPUTATION_K})")
 
     # ── Hardware Display Info ─────────────────────────────────────────────────
 
@@ -300,11 +242,21 @@ class LLMRecommender:
         w_reasoning = blended["reasoning"]
         w_ii = blended["intelligence_index"]
         sw, bw, hw_w = self.semantic_weight, self.benchmark_weight, self.hardware_weight
+        
+        # Dynamic Weight Shifting:
+        # If the query maps to a specific benchmark (math, coding, reasoning), the benchmark 
+        # score is an objective measure of intent. Semantic search (name matching) becomes harmful.
+        # We shift 100% of the semantic weight into the benchmark weight.
+        # If use_case is "general" (e.g. "medical", "finance"), semantic search remains crucial.
+        if use_case != "general":
+            shift_amount = sw * 1.0
+            sw -= shift_amount
+            bw += shift_amount
 
         scored = []
         for model in compatible:
             mid = model.get("model_id", "")
-            sem_score = sem_results.get(mid, 0.5)
+            sem_score = sem_results.get(mid, 0.0)
 
             bmarks = model.get("benchmarks", {})
             c = bmarks.get("coding", 0) or 0

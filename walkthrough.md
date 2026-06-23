@@ -97,6 +97,22 @@ The system has **four major layers**:
 > [!CAUTION]
 > **Scraping Disclaimer**: The OpenCompass Selenium scrapers were developed and executed strictly once for **educational purposes** to demonstrate headless browser automation. The scraped OpenCompass records were ultimately deprecated and dropped from the final `master_model_db.jsonl` due to excessively sparse benchmark fill rates, meaning no proprietary data from OpenCompass powers the final engine.
 
+## Core Algorithm Tweaks
+1. **Dynamic Benchmark Blending**: We completely removed the hardcoded `USE_CASE_BENCHMARK_WEIGHTS` dictionary. When the system detects multiple use cases (e.g., "coding and math"), it now calculates the exact mathematical proportion dynamically based on keyword occurrences.
+2. **Eliminated Hardware Under-utilization Penalty**: We discovered that ultra-efficient, absolute-best models (like `1B` or `70B` parameter models) were being scored lower than inferior models on massive GPU clusters (like `10 B200s`). The hardware scoring algorithm was unfairly punishing them for "under-utilizing" the VRAM. I have flattened the left side of the Gaussian hardware curve: if a model fits in your VRAM, it no longer suffers any penalty for being "too small".
+3. **100% Semantic Weight Shifting**: Due to the percentile rank of the top 10 models being virtually indistinguishable (e.g., `0.999` vs `0.996`), a tiny semantic bias (like the word "coding" existing in an inferior model's name) was enough to propel it past the absolute #1 model. When a rigid use-case query is detected (Coding, Math, Reasoning), we now shift **100%** of the semantic weight into the benchmark score. 
+
+## Data Analysis & Quality Documentation
+1. **Data Verification**: Ran an exhaustive dataset analysis across the full `master_model_db.jsonl`.
+2. **Missing Values**: Verified that **0 missing values** exist for the benchmarks across all 1,996 records thanks to the successful implementation of the k-NN Imputation pipeline.
+3. **Data Quality File**: Refactored the statistics inside `DATA_QUALITY.md` into a single, unified Markdown table and updated all legacy counts to correctly reflect the `1,996` models we evaluated.
+
+## Frontend UI Quality of Life
+1. **Unbounded GPU Selection**: The `Num GPUs` field has been opened up; you can now incrementally add GPUs starting from 1, bypassing the rigid drop-down limits.
+2. **No On-Load Highlighting**: The interface no longer highlights use-case chips on startup, remaining neutral until a user takes action.
+3. **Removed Stale Chips**: Removed the "WRITING" chip since the backend does not specifically track a writing benchmark.
+4. **Favicon Restored**: Fixed the `404 Not Found` error preventing the cute robot favicon from rendering.
+
 **Pipeline phases** (see `orchestrator.py`):
 
 ```

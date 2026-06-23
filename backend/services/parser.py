@@ -10,7 +10,6 @@ from config.config import (
     GPU_NAME_MAPPINGS,
     GPU_DISPLAY_NAMES,
     USE_CASE_KEYWORDS,
-    USE_CASE_BENCHMARK_WEIGHTS,
     DEFAULT_USE_CASE,
     VRAM_MULTIPLIERS,
     KV_CACHE_RESERVE,
@@ -126,11 +125,10 @@ def detect_use_case(text: str) -> tuple[str, dict[str, float]]:
 
 
 def blend_benchmark_weights(proportions: dict[str, float]) -> dict[str, float]:
-    """Blend per-use-case benchmark weight vectors by multi-label proportions.
+    """Blend per-use-case benchmark weights dynamically based on keyword count.
 
-    When multiple use cases are detected (e.g. "write a Python math solver"
-    matches both coding and math), this creates a weighted average of their
-    respective benchmark weight vectors.
+    Directly uses the proportions of matched keywords. If only one category
+    is matched, it gets 100% of the weight. General queries get an even split.
 
     Args:
         proportions: {use_case: proportion} from detect_use_case(), sums to 1.0.
@@ -140,10 +138,21 @@ def blend_benchmark_weights(proportions: dict[str, float]) -> dict[str, float]:
     """
     blended = {"coding": 0.0, "math": 0.0, "reasoning": 0.0, "intelligence_index": 0.0}
 
+    # If general, split evenly
+    if "general" in proportions and len(proportions) == 1:
+        return {"coding": 0.25, "math": 0.25, "reasoning": 0.25, "intelligence_index": 0.25}
+
     for uc, proportion in proportions.items():
-        uc_weights = USE_CASE_BENCHMARK_WEIGHTS.get(uc, USE_CASE_BENCHMARK_WEIGHTS["general"])
-        for key in blended:
-            blended[key] += proportion * uc_weights[key]
+        if uc in blended:
+            blended[uc] = proportion
+
+    # Ensure it always sums to 1.0 (in case of intelligence_index / missing keys)
+    total = sum(blended.values())
+    if total > 0:
+        for k in blended:
+            blended[k] /= total
+    else:
+        return {"coding": 0.25, "math": 0.25, "reasoning": 0.25, "intelligence_index": 0.25}
 
     return blended
 
@@ -163,17 +172,7 @@ def determine_quantization(model_vram: float, total_vram: float) -> str:
     return "Insufficient"
 
 
-def calculate_benchmark_score(coding: float, math: float, reasoning: float,
-                               intelligence_index: float, use_case: str) -> float:
-    """Calculate benchmark score using raw values (legacy interface).
 
-    Note: The recommender now uses percentile-rank normalization internally.
-    This function is preserved for standalone/test use with the original formula.
-    """
-    w = USE_CASE_BENCHMARK_WEIGHTS.get(use_case, USE_CASE_BENCHMARK_WEIGHTS["general"])
-    score = (w["coding"] * (coding or 0) + w["math"] * (math or 0) +
-             w["reasoning"] * (reasoning or 0) + w["intelligence_index"] * (intelligence_index or 0))
-    return score / 100.0
 
 
 def calculate_hardware_score(model_vram_fp16: float, user_total_vram: float) -> float:
@@ -214,10 +213,13 @@ def calculate_hardware_score(model_vram_fp16: float, user_total_vram: float) -> 
     # Utilization ratio: how much of usable VRAM the model consumes
     utilization = effective_vram / usable_vram
 
-    # Gaussian bell curve centered at OPTIMAL_VRAM_UTILIZATION
-    util_score = math.exp(
-        -((utilization - OPTIMAL_VRAM_UTILIZATION) ** 2)
-        / (2 * VRAM_UTILIZATION_SIGMA ** 2)
-    )
+    if utilization <= OPTIMAL_VRAM_UTILIZATION:
+        util_score = 1.0
+    else:
+        sigma = VRAM_UTILIZATION_SIGMA  # 0.35 by default -> stricter penalty for overutilization
+        util_score = math.exp(
+            -((utilization - OPTIMAL_VRAM_UTILIZATION) ** 2)
+            / (2 * sigma ** 2)
+        )
 
     return util_score * quant_bonus

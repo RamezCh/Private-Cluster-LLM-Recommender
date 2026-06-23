@@ -192,6 +192,64 @@ class Orchestrator:
 
         logger.info(f"Phase 4 complete in {time.time() - t0:.1f}s")
 
+    def _impute_missing_benchmarks(self) -> None:
+        """Phase 4.5: Impute missing benchmark values using k-NN."""
+        logger.info("=" * 60)
+        logger.info("PHASE 4.5: Imputing missing benchmarks (k-NN)")
+        logger.info("=" * 60)
+        t0 = time.time()
+        
+        # We use a hardcoded K=5 since the config is separated in the pipeline
+        IMPUTATION_K = 5
+        fields = ["coding", "math", "reasoning", "intelligence_index"]
+        imputed_count = 0
+
+        for model in self.canonical_models:
+            benchmarks = model.get("benchmarks", {})
+            missing = [f for f in fields if not (benchmarks.get(f) or 0)]
+            present = [f for f in fields if (benchmarks.get(f) or 0)]
+
+            if not missing or not present:
+                continue
+
+            model_vec = [benchmarks.get(f, 0) for f in present]
+
+            neighbors = []
+            for other in self.canonical_models:
+                if other is model:
+                    continue
+                other_bench = other.get("benchmarks", {})
+                if not all(other_bench.get(f) for f in missing):
+                    continue
+                if not all(other_bench.get(f) for f in present):
+                    continue
+
+                other_vec = [other_bench.get(f, 0) for f in present]
+                dist = sum((a - b) ** 2 for a, b in zip(model_vec, other_vec)) ** 0.5
+                neighbors.append((dist, other))
+
+            if not neighbors:
+                continue
+
+            neighbors.sort(key=lambda x: x[0])
+            k = min(IMPUTATION_K, len(neighbors))
+
+            for f in missing:
+                total_weight = 0.0
+                weighted_sum = 0.0
+                for dist, neighbor in neighbors[:k]:
+                    w = 1.0 / (dist + 1e-6)
+                    weighted_sum += w * (neighbor.get("benchmarks", {}).get(f, 0) or 0)
+                    total_weight += w
+
+                imputed_value = weighted_sum / total_weight if total_weight > 0 else 0
+                benchmarks[f] = imputed_value
+                imputed_count += 1
+
+        if imputed_count > 0:
+            logger.info(f"Imputed {imputed_count} missing benchmark values via k-NN (k={IMPUTATION_K})")
+        logger.info(f"Phase 4.5 complete in {time.time() - t0:.1f}s")
+
     def _enrich_hf_metadata(self, max_workers: int = 5) -> None:
         """Phase 5: Fetch HuggingFace metadata in parallel."""
         logger.info("=" * 60)
@@ -359,7 +417,8 @@ class Orchestrator:
         self._scrape_opencompass(skip_scrape=skip_opencompass)
         self._deduplicate()
         self._merge_benchmarks()
-        self._enrich_hf_metadata(max_workers=5)
+        self._impute_missing_benchmarks()
+        self._enrich_hf_metadata(max_workers=20)
         self._calculate_vram()
         self._build_final_records()
         path = self._save_output()

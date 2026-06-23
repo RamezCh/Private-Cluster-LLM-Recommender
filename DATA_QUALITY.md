@@ -17,17 +17,26 @@ The pipeline follows a 7-phase flow:
 6. **VRAM Calculation**: Apply VRAM formulas based on parameter count and architecture.
 7. **Save**: Export the final processed data to `master_model_db.jsonl`.
 
-## 4. Data Quality Metrics (as of 2026-05-14)
-**Total Records:** 1,815 open-weight models
+## 4. Data Quality Metrics (as of 2026-06-23)
+**Total Records:** 1,996 open-weight models
 
 ### Benchmark Fill Rates
-| Benchmark | Coverage | Note |
-|-----------|----------|------|
-| Coding | 99.7% | High coverage |
-| Math | 97.7% | High coverage |
-| Reasoning | 100.0% | Complete |
-| Intelligence Index | 100.0% | Complete |
-| ELO | 0% | LMSYS removed; OpenCompass not yet scraped |
+| Field | Fill Rate | Missing Count | Imputation Strategy |
+|-------|-----------|---------------|---------------------|
+| HF Repo ID | ~50% | ~975 | N/A (Optional lookup) |
+| Coding Benchmark | **100%** | **0** | **k-NN (k=5) Imputed** |
+| Math Benchmark | **100%** | **0** | **k-NN (k=5) Imputed** |
+| Reasoning Benchmark| **100%** | **0** | **k-NN (k=5) Imputed** |
+| Intel. Benchmark | **100%** | **0** | **k-NN (k=5) Imputed** |
+| Params | >99% | <5 | Dropped in final build |
+
+## 5. Automated k-NN Benchmark Imputation
+
+To ensure comprehensive model evaluation without penalizing otherwise-capable models for missing a specific benchmark, MHII v2 employs an **Inverse-Distance Weighted k-Nearest Neighbors (k-NN)** imputation strategy directly within the Data Gathering Pipeline (`Orchestrator._impute_missing_benchmarks`).
+
+* **k=5**: The algorithm finds the 5 most statistically similar models (calculated via Euclidean distance across the *present* benchmarks).
+* **Inverse-Distance Weighting**: Closer neighbors exert a proportionally higher mathematical influence on the imputed score.
+* **Static Execution**: By applying this during `master_model_db.jsonl` generation rather than at application startup, we completely eliminated the 10-15 second cold start delay.
 
 ### HF Metadata Status
 | Status | Value | Description |
@@ -47,7 +56,7 @@ For models where the HuggingFace repo could not be resolved (`source_status = "r
 - **Accuracy**: Spot-checks indicate this matches expected values for community merges and fine-tunes.
 
 ## 6. Deduplication Strategy
-The pipeline reduced the initial dataset from 2,254 to 1,815 records by:
+The pipeline reduced the raw dataset down to 1,996 records by:
 - Normalizing model names to identify base models.
 - Grouping all variants of a base model.
 - Selecting the "best" variant—defined as the one with the most complete benchmark data.
@@ -61,3 +70,13 @@ The pipeline reduced the initial dataset from 2,254 to 1,815 records by:
 - **Cache**: To perform a full refresh, clear `hf_service.failed_lookups` and `hf_service.cache` in the orchestrator.
 - **Rate Limiting**: Parallel workers are limited to 5 to avoid HF Hub 429 errors.
 - **Frequency**: Data should be refreshed periodically to capture new model releases on the Open LLM Leaderboard.
+
+## 9. Data Distributions (as of 2026-06-23)
+Total Models Analyzed: 1996
+
+| Benchmark | Mean | Median | Mode | Min | Max | Missing Values |
+|-----------|------|--------|------|-----|-----|----------------|
+| **Coding** | 45.71 | 44.92 | 59.61 | 0.39 | 89.98 | 0 |
+| **Math** | 15.59 | 9.74 | 1.36 | 0.08 | 71.45 | 0 |
+| **Reasoning** | 28.41 | 29.47 | 48.67 | 0.87 | 76.70 | 0 |
+| **Intelligence Index** | 21.98 | 21.43 | 22.74 | 0.74 | 51.23 | 0 |

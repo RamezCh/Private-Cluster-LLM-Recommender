@@ -33,12 +33,6 @@ HARDWARE_WEIGHT = 0.20
 TOP_K_RECOMMENDATIONS = 5
 DEFAULT_USE_CASE = "general"
 
-USE_CASE_BENCHMARK_WEIGHTS = {
-    "coding": {"coding": 0.50, "math": 0.20, "reasoning": 0.20, "intelligence_index": 0.10},
-    "math": {"coding": 0.20, "math": 0.50, "reasoning": 0.20, "intelligence_index": 0.10},
-    "reasoning": {"coding": 0.20, "math": 0.20, "reasoning": 0.50, "intelligence_index": 0.10},
-    "general": {"coding": 0.25, "math": 0.25, "reasoning": 0.25, "intelligence_index": 0.25},
-}
 
 USE_CASE_KEYWORDS = {
     "coding": ["code", "coding", "programming", "developer", "software", "debug", "debugging",

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LLM Recommender</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="icon" type="image/png" href="favicon.png">
 </head>
 <body>
     <div class="container">
@@ -65,7 +66,7 @@
                 </div>
                 <div class="form-group">
                     <label>NUM GPUS</label>
-                    <input type="number" id="gpu-count" value="1" min="1" max="16">
+                    <input type="number" id="gpu-count" value="1" min="1">
                 </div>
                 <div class="form-group">
                     <label>TOTAL VRAM</label>
@@ -94,10 +95,9 @@
             <div class="form-group" style="margin-top: 1.5rem;">
                 <label>USE CASE</label>
                 <div class="chips" id="use-case-chips">
-                    <button type="button" class="chip active" data-value="coding">CODING</button>
+                    <button type="button" class="chip" data-value="coding">CODING</button>
                     <button type="button" class="chip" data-value="math">MATH</button>
                     <button type="button" class="chip" data-value="reasoning">REASONING</button>
-                    <button type="button" class="chip" data-value="writing">WRITING</button>
                     <button type="button" class="chip" data-value="general">GENERAL</button>
                 </div>
                 <textarea id="use-case-input" placeholder="Or describe your task..." rows="3" data-has-custom-text="false" style="margin-top: 1rem;"></textarea>

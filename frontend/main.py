@@ -94,7 +94,7 @@ def main():
         gpu_names = [n for n, _ in gpu_opts]
         sel_name = st.selectbox("GPU Type", options=gpu_names,
                                 index=gpu_names.index("A100 80GB") if "A100 80GB" in gpu_names else 0)
-        gpu_count = st.number_input("Number of GPUs", min_value=1, max_value=16, value=1, step=1)
+        gpu_count = st.number_input("Number of GPUs", min_value=1, value=1, step=1)
 
         sel_id = None
         for n, gid in gpu_opts:

@@ -30,6 +30,7 @@ from loguru import logger
 
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
+sys.path.insert(0, str(BASE_DIR.parent))
 
 from src.config import LOGS_DIR, OUTPUT_FILE, logging_config
 from src.fetchers import OpenCompassScraper
@@ -110,6 +111,7 @@ def run_merge_only(args):
     orchestrator._scrape_opencompass(skip_scrape=True, use_cache=True)
     orchestrator._deduplicate()
     orchestrator._merge_benchmarks()
+    orchestrator._impute_missing_benchmarks()
     orchestrator._enrich_hf_metadata(max_workers=20)
     orchestrator._calculate_vram()
     orchestrator._build_final_records()

@@ -78,6 +78,12 @@ for r in records:
     if not r.get("hardware_fit"):
         missing_counts["hardware_fit"] += 1
         has_missing = True
+    
+    bmarks = r.get("benchmarks", {})
+    if not bmarks.get("coding"): missing_counts["benchmark:coding"] += 1
+    if not bmarks.get("math"): missing_counts["benchmark:math"] += 1
+    if not bmarks.get("reasoning"): missing_counts["benchmark:reasoning"] += 1
+    if not bmarks.get("intelligence_index"): missing_counts["benchmark:intelligence_index"] += 1
 
 for key, count in sorted(missing_counts.items(), key=lambda x: x[1], reverse=True):
     pct = round(count / total * 100, 1) if total else 0
