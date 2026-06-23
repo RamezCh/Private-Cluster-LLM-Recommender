@@ -21,14 +21,14 @@ The pipeline follows a 7-phase flow:
 **Total Records:** 1,996 open-weight models
 
 ### Benchmark Fill Rates
-| Field | Fill Rate | Missing Count | Imputation Strategy |
-|-------|-----------|---------------|---------------------|
-| HF Repo ID | ~50% | ~975 | N/A (Optional lookup) |
-| Coding Benchmark | **100%** | **0** | **k-NN (k=5) Imputed** |
-| Math Benchmark | **100%** | **0** | **k-NN (k=5) Imputed** |
-| Reasoning Benchmark| **100%** | **0** | **k-NN (k=5) Imputed** |
-| Intel. Benchmark | **100%** | **0** | **k-NN (k=5) Imputed** |
-| Params | >99% | <5 | Dropped in final build |
+| Field | Fill Rate (Before Imputation) | Fill Rate (After Imputation) | Missing Count (After) | Imputation Strategy |
+|-------|-------------------------------|------------------------------|-----------------------|---------------------|
+| HF Repo ID | ~50% | ~50% | ~975 | N/A (Optional lookup) |
+| Coding Benchmark | ~78% | **100%** | **0** | **k-NN (k=5) Imputed** |
+| Math Benchmark | ~75% | **100%** | **0** | **k-NN (k=5) Imputed** |
+| Reasoning Benchmark| ~85% | **100%** | **0** | **k-NN (k=5) Imputed** |
+| Intel. Benchmark | ~80% | **100%** | **0** | **k-NN (k=5) Imputed** |
+| Params | >99% | >99% | <5 | Dropped in final build (Hardware VRAM formula requires a parameter count) |
 
 ## 5. Automated k-NN Benchmark Imputation
 
