@@ -75,7 +75,7 @@ The system has **four major layers**:
 | Work Package | Status | Implementation |
 |---|---|---|
 | **Data Scraping** ✓ | Complete | Selenium scrapes OpenCompass leaderboards; HF datasets API fetches OLLM |
-| **Data Quality** ✓ | Complete | `DATA_QUALITY.md` — fill rates, deduplication, completeness metrics |
+| **Data Quality** ✓ | Complete | `docs/DATA_QUALITY.md` — fill rates, deduplication, completeness metrics |
 | **Experiments Logging** ✓ | Complete | W&B integration logs queries, latencies, hardware, scores |
 | **Vector Embeddings** ✓ | Complete | all-MiniLM-L6-v2 → 384-dim FAISS index with inner product search |
 | **Recommender System** ✓ | Complete | Content-based + SVD collaborative filtering + hybrid blending |
@@ -105,7 +105,7 @@ The system has **four major layers**:
 ## Data Analysis & Quality Documentation
 1. **Data Verification**: Ran an exhaustive dataset analysis across the full `master_model_db.jsonl`.
 2. **Missing Values**: Verified that **0 missing values** exist for the benchmarks across all 1,996 records thanks to the successful implementation of the k-NN Imputation pipeline.
-3. **Data Quality File**: Refactored the statistics inside `DATA_QUALITY.md` into a single, unified Markdown table and updated all legacy counts to correctly reflect the `1,996` models we evaluated.
+3. **Data Quality File**: Refactored the statistics inside `docs/DATA_QUALITY.md` into a single, unified Markdown table and updated all legacy counts to correctly reflect the `1,996` models we evaluated.
 
 ## Collaborative Filtering (SVD) Fine-Tuning
 1. **Cross-Validation**: Implemented an automated SVD Error Curve generator (`generate_svd_curve.py`) to hyperparameter-tune the collaborative filter.
@@ -144,7 +144,7 @@ The deduplicator normalizes model names by stripping suffixes (`-instruct`, `-ch
 
 ### 4.1 Metrics Defined
 
-Documented in `DATA_QUALITY.md` with the following coverage:
+Documented in `docs/DATA_QUALITY.md` with the following coverage:
 
 | Metric | Value | Description |
 |--------|-------|-------------|
@@ -326,7 +326,7 @@ where:
 
 To prevent the algorithm from overfitting to random noise in the sparse user-ratings matrix, an elbow-curve cross-validation test was performed across 494 user feedback entries (~11% density).
 
-![SVD Error Curve](/C:/Users/ramiz/.gemini/antigravity/brain/dd454913-d9b4-46a4-8966-46d4922df18d/svd_curve.png)
+![SVD Error Curve](svd_curve.png)
 
 As shown in the curve above, the Root Mean Square Error (RMSE) drops significantly and hits a global minimum precisely at `k=10`. Any number of latent factors higher than 10 causes the model to overfit to noise, increasing the error rate. Therefore, the production engine is strictly locked to $k=10$.
 
@@ -801,7 +801,7 @@ Basic cosine similarity is search-only and lacks contextual awareness. Our syste
 3. **Personalization (SVD)**: By blending content scores with truncated SVD rating predictions, the system adapts to historical user preferences, rather than treating every user with the same query identically.
 
 ### 15.4 Are we using all the mentioned data sources, or only Hugging Face?
-The pipeline code is fully written to merge Hugging Face leaderboard data with scraped general and academic OpenCompass leaderboards. However, in the current database run, OpenCompass scraping was skipped or had no cached files (showing 0 multi-source models). Thus, the current database values are derived from Hugging Face Open LLM Leaderboard entries, which also matches the 0% OpenCompass coverage documented in the active `DATA_QUALITY.md`.
+The pipeline code is fully written to merge Hugging Face leaderboard data with scraped general and academic OpenCompass leaderboards. However, in the current database run, OpenCompass scraping was skipped or had no cached files (showing 0 multi-source models). Thus, the current database values are derived from Hugging Face Open LLM Leaderboard entries, which also matches the 0% OpenCompass coverage documented in the active `docs/DATA_QUALITY.md`.
 
 ### 15.5 What are we logging to Weights & Biases, and how does it benefit us?
 We log:
