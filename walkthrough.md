@@ -192,7 +192,7 @@ Each LLM model in the database is converted to a **text representation** string:
 
 ```python
 text_repr = "model_name | base_model | model_type | architecture"
-# Example: "Llama-3.3-70B-Instruct | Llama-3.3-70B | instruct | llama"
+# Example: "Mixtral-8x22B-Instruct | Mixtral-8x22B | instruct | MixtralForCausalLM"
 ```
 
 This text is then encoded:
