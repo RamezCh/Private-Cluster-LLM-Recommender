@@ -81,20 +81,22 @@ class WandbLogger:
             "use_case_detection": use_case_detection,
         })
 
-    def log_recommendation(self, query: str, hardware: str, use_case: str,
+    def log_recommendation(self, query: str, gpu_name: str, num_gpus: int, use_case: str,
                            num_compatible: int, num_returned: int, top_model: str,
-                           top_model_score: float, latency_ms: float) -> None:
+                           top_model_score: float, output_models: list[str], latency_ms: float) -> None:
         if not self.enabled or self.run is None:
             return
         try:
             self.run.log({
                 "query": (query[:1000] + "...") if len(query) > 1000 else query,
-                "hardware": hardware,
+                "gpu_name": gpu_name,
+                "num_gpus": num_gpus,
                 "use_case": use_case,
                 "num_compatible": num_compatible,
                 "num_returned": num_returned,
                 "top_model": top_model,
                 "top_model_score": top_model_score,
+                "output_models": output_models,
                 "latency_ms": latency_ms,
             })
         except Exception as e:

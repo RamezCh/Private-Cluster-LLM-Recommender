@@ -216,8 +216,9 @@ class LLMRecommender:
 
         total_vram = hardware.total_vram_gb
 
-        # Pre-filter: only models that fit at INT4 within usable VRAM
-        usable_vram = total_vram * (1 - KV_CACHE_RESERVE)
+        # Pre-filter: only models that fit at INT4 within total VRAM (100% limit)
+        # The penalty for eating into KV cache (>80%) is handled by calculate_hardware_score
+        usable_vram = total_vram 
         # Model fits at INT4 if vram_fp16 * 0.25 <= usable_vram
         max_fp16_for_int4 = usable_vram / 0.25
 
@@ -313,12 +314,14 @@ class LLMRecommender:
                 top = result[0] if result else None
                 self._wandb.log_recommendation(
                     query=user_query[:1000],
-                    hardware=f"{hardware.count}x {hardware.gpu_name}",
+                    gpu_name=hardware.gpu_name,
+                    num_gpus=hardware.count,
                     use_case=use_case,
                     num_compatible=len(compatible),
                     num_returned=len(result),
                     top_model=top.model_id if top else "N/A",
                     top_model_score=top.final_score if top else 0.0,
+                    output_models=[m.model_id for m in result],
                     latency_ms=latency_ms,
                 )
         except Exception as e:

@@ -210,6 +210,9 @@ function createCardHTML(item, mode = 'pure') {
     const cfConfidence = item.cf_confidence;
     const showCFPrediction = mode === 'hybrid' && cfPrediction != null;
     
+    const hardwareMatch = model.matched_hardware || {};
+    const recommendedQuant = hardwareMatch.quantization || model.hosting_strategy || 'FP16';
+    
     return `
         <div class="card" data-model-id="${escapeHtml(modelId)}">
             <span class="card-category">${item.category || item.label || 'Model'}</span>
@@ -221,8 +224,8 @@ function createCardHTML(item, mode = 'pure') {
                     <div class="stat-value">${formatNumber(model.params_billions)}B</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-label">Quantization</div>
-                    <div class="stat-value">${model.hosting_strategy || 'FP16'}</div>
+                    <div class="stat-label">Recommended Format</div>
+                    <div class="stat-value">${recommendedQuant}</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">VRAM (FP16)</div>

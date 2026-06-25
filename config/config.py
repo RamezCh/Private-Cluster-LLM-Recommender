@@ -19,8 +19,8 @@ VRAM_MULTIPLIERS = {
 
 # ─── VRAM Efficiency Scoring ──────────────────────────────────────────────────
 KV_CACHE_RESERVE = 0.20           # Reserve 20% of VRAM for KV-cache
-OPTIMAL_VRAM_UTILIZATION = 0.85   # Peak score at ~85% of usable VRAM
-VRAM_UTILIZATION_SIGMA = 0.35     # Gaussian spread for utilization curve
+OPTIMAL_VRAM_UTILIZATION = 0.60   # Penalize models utilizing less than 60% of total VRAM
+VRAM_UTILIZATION_SIGMA = 0.50     # Broad Gaussian spread for a small penalty on underutilization
 QUANT_BONUSES = {"fp16": 1.0, "int8": 0.90, "int4": 0.75}
 
 # ─── Benchmark Imputation ─────────────────────────────────────────────────────
@@ -44,6 +44,9 @@ USE_CASE_KEYWORDS = {
     "reasoning": ["reason", "reasoning", "logic", "logical", "think", "thinking", "analyze",
                   "analysis", "solve", "problem solving", "puzzle", "deduction", "inference",
                   "critical thinking", "decision", "strategy", "planning", "goal"],
+    "intelligence_index": ["knowledge", "intelligence", "trivia", "facts", "information", 
+                           "general knowledge", "q&a", "question", "answer", "creative", 
+                           "writing", "brainstorm"],
     "general": [],
 }
 

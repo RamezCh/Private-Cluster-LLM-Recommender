@@ -176,50 +176,43 @@ def determine_quantization(model_vram: float, total_vram: float) -> str:
 
 
 def calculate_hardware_score(model_vram_fp16: float, user_total_vram: float) -> float:
-    """Continuous VRAM-aware hardware score with KV-cache reservation.
+    """Continuous VRAM-aware hardware score.
 
-    Scores models on a smooth Gaussian curve based on how well they utilize
-    the available VRAM after reserving 20% for KV-cache. The peak score is
-    at ~85% of usable VRAM. Models that are too small for the hardware are
-    penalized (low utilization), and models requiring aggressive quantization
-    receive a quality penalty.
-
-    Args:
-        model_vram_fp16: Model's VRAM requirement at FP16 precision (GB).
-        user_total_vram: User's total available VRAM across all GPUs (GB).
-
-    Returns:
-        Score in [0.0, 1.0] where higher means better VRAM utilization.
+    Scores models based on how well they utilize the total available VRAM:
+    - 70% to 85% of total VRAM: Perfect score (1.0).
+    - > 85% of total VRAM: Heavy penalty (eating too far into KV Cache).
+    - < 70% of total VRAM: Light penalty (underutilization).
+    Quantization penalties are applied as a multiplier.
     """
     if user_total_vram <= 0 or model_vram_fp16 <= 0:
         return 0.0
 
-    usable_vram = user_total_vram * (1 - KV_CACHE_RESERVE)
-
-    # Determine best quantization that fits and effective VRAM usage
-    # INT8 ≈ 50% of FP16, INT4 ≈ 25% of FP16
-    if model_vram_fp16 <= usable_vram:
+    # Determine best quantization that fits within 100% total VRAM
+    if model_vram_fp16 <= user_total_vram:
         effective_vram = model_vram_fp16
         quant_bonus = QUANT_BONUSES["fp16"]
-    elif model_vram_fp16 * 0.5 <= usable_vram:
+    elif model_vram_fp16 * 0.5 <= user_total_vram:
         effective_vram = model_vram_fp16 * 0.5
         quant_bonus = QUANT_BONUSES["int8"]
-    elif model_vram_fp16 * 0.25 <= usable_vram:
+    elif model_vram_fp16 * 0.25 <= user_total_vram:
         effective_vram = model_vram_fp16 * 0.25
         quant_bonus = QUANT_BONUSES["int4"]
     else:
         return 0.0
 
-    # Utilization ratio: how much of usable VRAM the model consumes
-    utilization = effective_vram / usable_vram
+    # Utilization ratio: how much of TOTAL VRAM the model consumes
+    utilization = effective_vram / user_total_vram
 
-    if utilization <= OPTIMAL_VRAM_UTILIZATION:
-        util_score = 1.0
+    if utilization > 0.85:
+        # Heavy penalty for exceeding 85%
+        sigma_over = 0.15
+        util_score = math.exp(-((utilization - 0.85) ** 2) / (2 * sigma_over ** 2))
+    elif utilization < 0.70:
+        # Lighter penalty for underutilization
+        sigma_under = 0.50
+        util_score = math.exp(-((utilization - 0.70) ** 2) / (2 * sigma_under ** 2))
     else:
-        sigma = VRAM_UTILIZATION_SIGMA  # 0.35 by default -> stricter penalty for overutilization
-        util_score = math.exp(
-            -((utilization - OPTIMAL_VRAM_UTILIZATION) ** 2)
-            / (2 * sigma ** 2)
-        )
+        # 70% to 85% is perfect
+        util_score = 1.0
 
     return util_score * quant_bonus
