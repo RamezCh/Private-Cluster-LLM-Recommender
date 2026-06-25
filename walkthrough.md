@@ -270,14 +270,13 @@ The division by 100 normalizes from the $[0, 100]$ benchmark scale to $[0, 1]$.
 
 ### 6.3 Hardware Score — Asymmetric VRAM Fit
 
-The hardware score prevents models from crashing the user's machine (OOM) while allowing highly-efficient, smaller models to shine without penalty.
+The hardware score optimizes VRAM usage against total available hardware:
 
-**Over-Utilization (Too Large)**: 
-If a model exceeds optimal VRAM limits, its hardware score drops aggressively following an exponential decay (Gaussian) curve:
-$$S_{\text{hw}} = e^{-\frac{(u - u_{\text{opt}})^2}{2\sigma^2}}$$
+- **Perfect Utilization (70% - 85% Total VRAM)**: Models operating in this sweet spot receive a perfect $1.0$ multiplier.
+- **Over-Utilization (> 85% Total VRAM)**: Models eating deeply into the required KV cache reserve receive a heavy Gaussian penalty, dropping to $0.0$ if they exceed 90% of total VRAM.
+- **Under-Utilization (< 70% Total VRAM)**: Models that are "too small" for the hardware receive a light Gaussian penalty.
 
-**Under-Utilization (Fits Perfectly)**:
-If a model fits safely inside the VRAM limits, the under-utilization penalty has been completely eliminated ($S_{\text{hw}} = 1.0$). If a 1B parameter model fits on a 10x B200 cluster, it will not be mathematically penalized for being "too small."
+Quantization format (FP16, INT8, INT4) applies an additional multiplier to account for precision loss.
 
 ### 6.4 VRAM Calculation — Model Size Estimation
 
@@ -327,7 +326,7 @@ where:
 
 To prevent the algorithm from overfitting to random noise in the sparse user-ratings matrix, an elbow-curve cross-validation test was performed across 494 user feedback entries (~11% density).
 
-![SVD Error Curve](/C:/Users/ramiz/.gemini/antigravity/brain/45e1777a-60aa-4f22-bb60-e9f3cfc3075f/svd_curve.png)
+![SVD Error Curve](/C:/Users/ramiz/.gemini/antigravity/brain/dd454913-d9b4-46a4-8966-46d4922df18d/svd_curve.png)
 
 As shown in the curve above, the Root Mean Square Error (RMSE) drops significantly and hits a global minimum precisely at `k=10`. Any number of latent factors higher than 10 causes the model to overfit to noise, increasing the error rate. Therefore, the production engine is strictly locked to $k=10$.
 
@@ -530,12 +529,14 @@ Implemented in `wandb_logger.py` with the following logged metrics:
 | Metric | Type | Description |
 |--------|------|-------------|
 | `query` | string | User query text (truncated to 1000 chars) |
-| `hardware` | string | e.g., "8x A100 80GB" |
+| `gpu_name` | string | e.g., "A100 80GB" |
+| `num_gpus` | int | Number of requested GPUs |
 | `use_case` | string | Detected use case category |
 | `num_compatible` | int | Models passing VRAM filter |
 | `num_returned` | int | Models in top-k result |
 | `top_model` | string | #1 recommended model ID |
 | `top_model_score` | float | Final score of #1 model |
+| `output_models` | list | List of all recommended model IDs |
 | `latency_ms` | float | End-to-end recommendation latency |
 
 **Configuration logged**:
