@@ -203,9 +203,12 @@ def calculate_hardware_score(model_vram_fp16: float, user_total_vram: float) -> 
     # Utilization ratio: how much of TOTAL VRAM the model consumes
     utilization = effective_vram / user_total_vram
 
-    if utilization > 0.85:
-        # Heavy penalty for exceeding 85%
-        sigma_over = 0.15
+    if utilization > 0.90:
+        # Above 90% is too much VRAM, completely fail it
+        return 0.0
+    elif utilization > 0.85:
+        # Heavy penalty for exceeding 85%, dropping to ~0.04 at 90%
+        sigma_over = 0.02
         util_score = math.exp(-((utilization - 0.85) ** 2) / (2 * sigma_over ** 2))
     elif utilization < 0.70:
         # Lighter penalty for underutilization
